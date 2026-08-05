@@ -8,5 +8,8 @@
   "output": "var/latest-digest.txt",
   "minimum": 5,
   "maximum": 10,
-  "webhook_env": "FEISHU_WEBHOOK_URL"
+  "webhook_env": "FEISHU_WEBHOOK_URL",
+  "llm_endpoint": "https://YOUR-OPENAI-COMPATIBLE-ENDPOINT/v1/chat/completions",
+  "llm_model": "YOUR_MODEL",
+  "llm_api_key_env": "NEXUSNEWS_LLM_API_KEY"
 }

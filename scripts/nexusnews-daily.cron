@@ -1,2 +1,3 @@
-# Run every day at 08:00 local time. Install with: crontab scripts/nexusnews-daily.cron
-0 8 * * * cd /absolute/path/to/Nexusnews && /usr/bin/python3 -m nexusnews --config config.json >> var/cron.log 2>&1
+# Run every day at 08:30 Asia/Shanghai. Set CRON_TZ support according to your cron implementation.
+CRON_TZ=Asia/Shanghai
+30 8 * * * cd /absolute/path/to/Nexusnews && /usr/bin/python3 -m nexusnews --config config.json >> var/cron.log 2>&1

@@ -20,6 +20,9 @@ class Config:
     minimum: int = 5
     maximum: int = 10
     webhook_env: str = "FEISHU_WEBHOOK_URL"
+    llm_endpoint: str | None = None
+    llm_model: str | None = None
+    llm_api_key_env: str = "NEXUSNEWS_LLM_API_KEY"
 
 
 def load_config(path: str | Path) -> Config:
@@ -35,4 +38,6 @@ def load_config(path: str | Path) -> Config:
         raise ValueError("configured source kind must currently be 'rss'")
     if not 1 <= config.minimum <= config.maximum <= 10:
         raise ValueError("config selection must satisfy 1 <= minimum <= maximum <= 10")
+    if bool(config.llm_endpoint) != bool(config.llm_model):
+        raise ValueError("llm_endpoint and llm_model must be configured together")
     return config

@@ -23,6 +23,14 @@ class SQLiteItemStore:
                 stored_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                digest_id TEXT NOT NULL, scope TEXT NOT NULL, target_id TEXT NOT NULL,
+                user_id TEXT NOT NULL, vote TEXT NOT NULL CHECK(vote IN ('up', 'down')),
+                source_id TEXT, event_key TEXT, feedback_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (digest_id, scope, target_id, user_id)
+            )
+        """)
 
     def close(self) -> None:
         self._connection.close()
@@ -58,6 +66,29 @@ class SQLiteItemStore:
             (since, limit),
         ).fetchall()
         return [Item(**dict(row)) for row in rows]
+
+    def record_feedback(self, *, digest_id: str, scope: str, vote: str, user_id: str,
+                        item_id: str | None = None, source_id: str | None = None, event_key: str | None = None) -> None:
+        if scope not in {"item", "digest"} or vote not in {"up", "down"}:
+            raise ValueError("feedback scope/vote must be item|digest and up|down")
+        target = item_id if scope == "item" else digest_id
+        if not target:
+            raise ValueError("item feedback requires item_id")
+        with self._connection:
+            self._connection.execute("""INSERT INTO feedback
+                (digest_id, scope, target_id, user_id, vote, source_id, event_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(digest_id, scope, target_id, user_id) DO UPDATE SET
+                vote=excluded.vote, source_id=excluded.source_id, event_key=excluded.event_key,
+                feedback_at=CURRENT_TIMESTAMP""",
+                (digest_id, scope, target, user_id, vote, source_id, event_key))
+
+    def feedback_rate(self, digest_id: str, *, scope: str = "item") -> dict[str, float | int | None]:
+        row = self._connection.execute("""SELECT COUNT(*) total,
+            SUM(CASE WHEN vote='up' THEN 1 ELSE 0 END) up FROM feedback
+            WHERE digest_id=? AND scope=?""", (digest_id, scope)).fetchone()
+        total, up = int(row["total"]), int(row["up"] or 0)
+        return {"up": up, "down": total - up, "total": total, "rate": up / total if total else None}
 
     def __enter__(self) -> "SQLiteItemStore":
         return self

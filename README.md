@@ -50,6 +50,41 @@ python3 -m nexusnews --config config.json
 
 Delivery retries three times with exponential backoff. `scripts/nexusnews-daily.cron`
 is an installable scheduling example; replace its absolute project path first.
-The built-in summarizer is a deterministic Chinese fallback suitable for dry runs.
-Its `Summarizer` interface is the integration point for an approved LLM-backed
-editorial implementation; no model credential is required or stored by this MVP.
+Configure an OpenAI-compatible `llm_endpoint` and `llm_model` to generate the
+editorial summary. Export `NEXUSNEWS_LLM_API_KEY` only in the runtime environment.
+Missing credentials, invalid responses, network errors, and editorial length
+violations automatically use the deterministic local fallback; secrets are never
+written to SQLite or logs.
+
+Feishu interactive callbacks should pass their verified callback fields to the
+feedback recorder (the surrounding callback service is responsible for signature
+verification and mapping Feishu's user ID):
+
+```sh
+python3 -m nexusnews --config config.json --record-feedback \
+  '{"digest_id":"2026-08-05","scope":"item","item_id":"ITEM_ID","vote":"up","user_id":"FEISHU_USER_ID"}'
+python3 -m nexusnews --config config.json --feedback-stats 2026-08-05
+```
+
+The latest vote from the same user for the same item/digest replaces the earlier
+vote. Text replies such as `1好` / `1差` and `本期好` / `本期差` can be mapped to the
+same recorder by the callback service.
+
+## Production smoke test and 14-day trial
+
+Local Board must inject `FEISHU_WEBHOOK_URL` and, when LLM mode is enabled,
+`NEXUSNEWS_LLM_API_KEY`. Validate configuration without exposing values:
+
+```sh
+test -n "$FEISHU_WEBHOOK_URL" && test -n "$NEXUSNEWS_LLM_API_KEY"
+python3 -m nexusnews --config config.json --dry-run
+python3 -m nexusnews --config config.json
+tail -n 50 var/nexusnews.log
+```
+
+Confirm the target received 5–10 items and manually check summary/impact lengths.
+Install `scripts/nexusnews-daily.cron` after replacing its absolute path; it fixes
+the schedule at 08:30 Asia/Shanghai. For 14 days, check delivery and source errors
+daily, review item feedback rate every 7 days, and investigate any failed run before
+the next schedule. Never paste webhook URLs, tokens, or full callback user IDs into
+issues or logs.
