@@ -47,6 +47,18 @@ class SQLiteItemStore:
         ).fetchall()
         return [Item(**dict(row)) for row in rows]
 
+    def recent(self, *, since: str, limit: int = 500) -> list[Item]:
+        """Return published items in newest-first order."""
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        rows = self._connection.execute(
+            """SELECT id, source, title, url, content, published_at, dedupe_key
+               FROM items WHERE published_at IS NOT NULL AND published_at >= ?
+               ORDER BY published_at DESC, id LIMIT ?""",
+            (since, limit),
+        ).fetchall()
+        return [Item(**dict(row)) for row in rows]
+
     def __enter__(self) -> "SQLiteItemStore":
         return self
 

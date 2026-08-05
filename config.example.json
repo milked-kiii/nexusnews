@@ -1,0 +1,12 @@
+{
+  "sources": [
+    {"name": "OpenAI News", "url": "https://openai.com/news/rss.xml"},
+    {"name": "Google AI", "url": "https://blog.google/technology/ai/rss/"},
+    {"name": "MIT Technology Review AI", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"}
+  ],
+  "database": "var/nexusnews.db",
+  "output": "var/latest-digest.txt",
+  "minimum": 5,
+  "maximum": 10,
+  "webhook_env": "FEISHU_WEBHOOK_URL"
+}
