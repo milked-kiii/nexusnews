@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Nexusnews offline demo</title>
+  <item><title>Open-source agents enter the enterprise</title><link>https://example.com/agents?utm_source=demo</link><guid>agents-1</guid><description>开源智能体框架新增企业权限控制、审计日志和可复现工作流，方便团队在受控环境中部署自动化任务。</description><pubDate>Thu, 01 Jan 2099 08:00:00 GMT</pubDate></item>
+  <item><title>Open-source agents enter the enterprise</title><link>https://example.com/agents?utm_source=duplicate</link><guid>agents-duplicate</guid><description>同一事件的重复稿件，用于验证日报不会重复占位。</description><pubDate>Thu, 01 Jan 2099 07:59:00 GMT</pubDate></item>
+  <item><title>Researchers improve small-model reasoning</title><link>https://example.com/reasoning</link><guid>reasoning-1</guid><description>研究团队公开一种训练方法，提升小模型在多步骤推理任务中的稳定性，并降低推理资源消耗。</description><pubDate>Thu, 01 Jan 2099 07:00:00 GMT</pubDate></item>
+  <item><title>AI coding tools add repository context</title><link>https://example.com/coding</link><guid>coding-1</guid><description>代码助手开始索引仓库结构、测试结果与变更历史，以减少跨文件修改时的上下文遗漏。</description><pubDate>Thu, 01 Jan 2099 06:00:00 GMT</pubDate></item>
+  <item><title>New benchmark targets medical hallucinations</title><link>https://example.com/medical</link><guid>medical-1</guid><description>新的医疗问答基准重点测量模型编造依据和忽略不确定性的情况，并提供专家标注数据。</description><pubDate>Thu, 01 Jan 2099 05:00:00 GMT</pubDate></item>
+  <item><title>Robotics model learns from fewer demonstrations</title><link>https://example.com/robotics</link><guid>robotics-1</guid><description>机器人策略模型通过组合视觉表征与动作先验，用更少的示范完成新的抓取和摆放任务。</description><pubDate>Thu, 01 Jan 2099 04:00:00 GMT</pubDate></item>
+  <item><title>Data centers test lower-power AI accelerators</title><link>https://example.com/hardware</link><guid>hardware-1</guid><description>数据中心试用低功耗推理加速器，目标是在保持吞吐量的同时降低单位请求的能耗和散热压力。</description><pubDate>Thu, 01 Jan 2099 03:00:00 GMT</pubDate></item>
+  <item><title>Creative suite ships local image generation</title><link>https://example.com/creative</link><guid>creative-1</guid><description>创意软件加入端侧图像生成能力，素材无需上传云端即可完成草图扩展和风格变体。</description><pubDate>Thu, 01 Jan 2099 02:00:00 GMT</pubDate></item>
+</channel></rss>

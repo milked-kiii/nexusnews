@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
+from nexusnews.__main__ import main
 from nexusnews.config import Config, Source, load_config
 from nexusnews.digest import DigestEntry, render_digest, select_items
 from nexusnews.models import RawItem, normalize_item
@@ -64,6 +66,19 @@ class DigestTests(unittest.TestCase):
             text = run(config, FakeTransport(payload), dry_run=True, now=datetime(2026, 8, 5, 2, tzinfo=timezone.utc))
             self.assertEqual(text.count("为什么重要："), 5)
             self.assertEqual(Path(config.output).read_text(encoding="utf-8"), text + "\n")
+
+    def test_bundled_demo_runs_from_cli_without_network_or_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = json.loads(Path("config.demo.json").read_text(encoding="utf-8"))
+            config["database"] = str(Path(directory) / "demo.db")
+            config["output"] = str(Path(directory) / "digest.txt")
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            with patch("sys.argv", ["nexusnews", "--config", str(config_path), "--dry-run"]):
+                self.assertEqual(main(), 0)
+            output = Path(config["output"]).read_text(encoding="utf-8")
+            self.assertEqual(output.count("为什么重要："), 7)
+            self.assertEqual(output.count("Open-source agents enter the enterprise"), 1)
 
 
 if __name__ == "__main__":

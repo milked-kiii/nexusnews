@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from .config import load_config
-from .fetchers import UrlLibTransport
+from .fetchers import LocalOrUrlTransport, UrlLibTransport
 from .pipeline import run
 from .storage import SQLiteItemStore
 
@@ -30,7 +30,7 @@ def main() -> int:
         with SQLiteItemStore(config.database) as store:
             print(json.dumps(store.feedback_rate(args.feedback_stats), ensure_ascii=False))
     else:
-        print(run(config, UrlLibTransport(), dry_run=args.dry_run))
+        print(run(config, LocalOrUrlTransport(UrlLibTransport()), dry_run=args.dry_run))
     return 0
 
 

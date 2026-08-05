@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -27,6 +28,21 @@ class UrlLibTransport:
             raise FetchError(f"HTTP {exc.code} fetching {url}") from exc
         except (URLError, TimeoutError) as exc:
             raise FetchError(f"network error fetching {url}: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class LocalOrUrlTransport:
+    """Read explicit local paths for demos and delegate URLs to HTTP transport."""
+
+    remote: Transport
+
+    def get(self, url: str, *, timeout: float, headers: Mapping[str, str]) -> bytes:
+        if "://" in url:
+            return self.remote.get(url, timeout=timeout, headers=headers)
+        try:
+            return Path(url).read_bytes()
+        except OSError as exc:
+            raise FetchError(f"cannot read local source {url}: {exc}") from exc
 
 
 def _local_name(tag: str) -> str:

@@ -1,0 +1,9 @@
+{
+  "sources": [
+    {"name": "Nexusnews Demo", "url": "samples/demo-feed.xml"}
+  ],
+  "database": "var/demo.db",
+  "output": "var/demo-digest.txt",
+  "minimum": 5,
+  "maximum": 10
+}

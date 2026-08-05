@@ -25,20 +25,40 @@ Run tests without network access:
 python3 -m unittest discover -s tests -v
 ```
 
-## End-to-end daily digest
+## Offline end-to-end demo
 
-Requires Python 3.10+ and no third-party packages. Copy `config.example.json` to
-`config.json`, review the placeholder source list, then run:
+Requires Python 3.10+ and no third-party packages, network, webhook, or API key.
+From the repository root, run:
+
+```sh
+python3 -m nexusnews --config config.demo.json --dry-run
+```
+
+Expected result: seven structured stories are printed and written to
+`var/demo-digest.txt`; the deliberately duplicated sample story appears once. Each
+story includes title, source, first-party link, Chinese summary, and why it matters.
+Normalized items persist in `var/demo.db`, and logs go to `var/nexusnews.log`.
+Delete those three generated files when you want a clean local run.
+
+The bundled sample uses future publication dates only so it remains inside the
+rolling 24-hour selector whenever the demo is run. It is synthetic demonstration
+content, not a current-news fixture. The deterministic local summarizer is useful
+for validating the pipeline, but its editorial quality is below a configured LLM.
+
+## Optional live sources and integrations
+
+Copy `config.example.json` to `config.json` and review its source list to use live
+RSS. This mode needs network access:
 
 ```sh
 python3 -m nexusnews --config config.json --dry-run
 ```
 
-The command fetches configured RSS sources, stores normalized items in
-`var/nexusnews.db`, selects 5–10 unique items from the last 24 hours, and writes a
-Chinese preview to `var/latest-digest.txt`. Operational logs are in
-`var/nexusnews.log`. A run fails rather than padding the digest with duplicates if
-fewer than the configured minimum unique recent stories exist.
+The command stores normalized items in `var/nexusnews.db`, selects 5–10 unique
+items from the last 24 hours, and writes `var/latest-digest.txt`. A run fails rather
+than padding the digest with duplicates if all sources fail; if fewer than the
+configured minimum unique stories pass selection, it emits an explicit empty-day
+message.
 
 For delivery, create a Feishu custom-bot webhook and export it only in the runtime
 environment (never in config or source control):
@@ -70,7 +90,7 @@ The latest vote from the same user for the same item/digest replaces the earlier
 vote. Text replies such as `1好` / `1差` and `本期好` / `本期差` can be mapped to the
 same recorder by the callback service.
 
-## Production smoke test and 14-day trial
+## Optional delivery smoke test
 
 Local Board must inject `FEISHU_WEBHOOK_URL` and, when LLM mode is enabled,
 `NEXUSNEWS_LLM_API_KEY`. Validate configuration without exposing values:
@@ -83,8 +103,6 @@ tail -n 50 var/nexusnews.log
 ```
 
 Confirm the target received 5–10 items and manually check summary/impact lengths.
-Install `scripts/nexusnews-daily.cron` after replacing its absolute path; it fixes
-the schedule at 08:30 Asia/Shanghai. For 14 days, check delivery and source errors
-daily, review item feedback rate every 7 days, and investigate any failed run before
-the next schedule. Never paste webhook URLs, tokens, or full callback user IDs into
-issues or logs.
+`scripts/nexusnews-daily.cron` remains an optional scheduling example; production
+deployment and trial monitoring are outside this local Demo. Never paste webhook
+URLs, tokens, or full callback user IDs into issues or logs.

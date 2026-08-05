@@ -51,7 +51,7 @@ class DigestEntry:
 
 def local_summarize(item: Item) -> DigestEntry:
     """Deterministic offline fallback; replace through Pipeline's summarizer interface."""
-    text = (item.content or item.title).strip()
+    text = (item.content or item.title).strip().rstrip("。！？.!?")
     summary = f"据{item.source}原文，该动态介绍了{text[:62]}。目前可确认的信息以原文披露为准，具体能力边界与适用条件仍需结合完整材料评估。"
     summary = summary[:110]
     if len(summary) < 60:
