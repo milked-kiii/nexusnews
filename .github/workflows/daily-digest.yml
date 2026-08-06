@@ -1,0 +1,35 @@
+name: AI 日报推送
+
+on:
+  schedule:
+    # 每天北京时间 10:00 (UTC+8 = 02:00 UTC)
+    - cron: "0 2 * * *"
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 推送日报到飞书私信
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          NEXUSNEWS_LLM_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python -m nexusnews --config config.json
+
+      - name: 推送日报到飞书群
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          NEXUSNEWS_LLM_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python -m nexusnews --config config.group.json
