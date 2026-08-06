@@ -163,8 +163,12 @@ def _escape_md(text: str) -> str:
 
 
 def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = None,
-                failed_sources: int = 0) -> str:
-    """Render a Feishu interactive card JSON string with category grouping."""
+                failed_sources: int = 0, doc_url: str | None = None) -> str:
+    """Render a Feishu interactive card JSON string with category grouping.
+
+    If ``doc_url`` is given, a "查看文档" primary button is appended so the
+    reader can open the synced Feishu cloud document.
+    """
     generated_at = generated_at or datetime.now(timezone.utc)
     zh_date = f"{generated_at.month}月{generated_at.day}日"
 
@@ -223,6 +227,20 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
         "tag": "note",
         "elements": [{"tag": "plain_text", "content": " · ".join(footer_lines)}],
     })
+
+    # Optional doc link button
+    if doc_url:
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "📄 查看文档"},
+                    "url": doc_url,
+                    "type": "primary",
+                }
+            ],
+        })
 
     card = {
         "header": {

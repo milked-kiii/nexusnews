@@ -10,6 +10,7 @@ from .config import Config
 from .delivery import send_feishu, send_feishu_card, send_feishu_chat, send_feishu_dm
 from .digest import (DigestEntry, cutoff, filter_entries, local_summarize, render_card, render_digest,
                      render_empty_digest, select_items)
+from .feishu_doc import sync_digest_to_doc
 from .fetchers import PlatformFetcher, Transport
 from .models import Item, normalize_item
 from .llm import OpenAICompatibleSummarizer, with_fallback
@@ -102,6 +103,21 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
     logging.info("digest generated", extra={"fetched": len(fetched), "inserted": inserted, "candidates": len(candidates), "scored": len(all_entries), "selected": len(entries)})
     if not dry_run:
         if card_mode:
+            # Optionally sync the digest to a Feishu cloud doc and append the
+            # doc link to the card before delivery.
+            doc_url = None
+            if config.doc_sync:
+                open_id = config.feishu_open_id or os.environ.get(config.feishu_open_id_env, "")
+                if open_id:
+                    title = f"🤖 AI 日报 {now.astimezone(timezone.utc).strftime('%Y-%m-%d')}"
+                    doc_text = render_digest(entries, generated_at=now, failed_sources=failed_sources)
+                    doc = sync_digest_to_doc(title, doc_text.splitlines(), open_id,
+                                             app_id_env=config.feishu_app_id_env,
+                                             app_secret_env=config.feishu_app_secret_env)
+                    doc_url = doc.get("url")
+                    logging.info("digest synced to doc", extra={"doc_url": doc_url})
+            if doc_url:
+                text = render_card(entries, generated_at=now, failed_sources=failed_sources, doc_url=doc_url)
             _deliver_card(config, text)
         else:
             _deliver_text(config, text)

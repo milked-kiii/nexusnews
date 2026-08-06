@@ -30,6 +30,7 @@ class Config:
     feishu_chat_id: str | None = None
     feishu_open_id_env: str = "NEXUSNEWS_FEISHU_OPEN_ID"
     delivery_mode: str = "webhook"
+    doc_sync: bool = False
     llm_endpoint: str | None = None
     llm_model: str | None = None
     llm_api_key_env: str = "NEXUSNEWS_LLM_API_KEY"
@@ -66,4 +67,6 @@ def load_config(path: str | Path) -> Config:
         raise ValueError("feishu_chat_id is required for chat delivery modes")
     if bool(config.llm_endpoint) != bool(config.llm_model):
         raise ValueError("llm_endpoint and llm_model must be configured together")
+    if config.doc_sync and not config.feishu_open_id:
+        raise ValueError("feishu_open_id is required when doc_sync is enabled (doc permission grant)")
     return config
