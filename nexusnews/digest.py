@@ -74,6 +74,11 @@ def _similar(left: Item, right: Item, threshold: float) -> bool:
 
 
 def select_items(items: list[Item], *, minimum: int = 5, maximum: int = 10, title_threshold: float = 0.6) -> list[Item]:
+    """Pre-summary candidate selection: dedupe by title, cap at a generous ceiling.
+
+    Relevance-score filtering happens AFTER summarization (see filter_entries),
+    because scores are produced by the LLM on DigestEntry, not on raw Item.
+    """
     if not 1 <= minimum <= maximum:
         raise ValueError("selection requires 1 <= minimum <= maximum")
     ranked = sorted(items, key=lambda item: (item.published_at or "", bool(item.content), item.source, item.id), reverse=True)
@@ -84,6 +89,17 @@ def select_items(items: list[Item], *, minimum: int = 5, maximum: int = 10, titl
         if len(selected) == maximum:
             break
     return selected
+
+
+def filter_entries(entries: list[DigestEntry], *, maximum: int = 10, min_relevance: int = 6) -> list[DigestEntry]:
+    """Post-summary business-relevance filter + rank.
+
+    Keeps only entries scoring >= min_relevance, sorts by score desc then keeps
+    the top `maximum`. This is where coding/work-Agent focus is enforced.
+    """
+    relevant = [e for e in entries if e.relevance_score >= min_relevance]
+    relevant.sort(key=lambda e: e.relevance_score, reverse=True)
+    return relevant[:maximum]
 
 
 # ── digest entry ────────────────────────────────────────────────
@@ -99,6 +115,7 @@ class DigestEntry:
     item_id: str = ""
     source_id: str = ""
     event_key: str = ""
+    relevance_score: int = 0
 
 
 def local_summarize(item: Item) -> DigestEntry:
@@ -112,7 +129,7 @@ def local_summarize(item: Item) -> DigestEntry:
     why = "这项进展可能影响 AI 技术或产品的能力、成本与可用性，值得结合一手材料持续观察后续采用情况。"
     category = classify_entry(item.title, item.content, item.source)
     return DigestEntry(item.title, item.source, item.url or f"https://{host}" if host else "（无链接）",
-                       summary, why, category, item.id, item.source, item.dedupe_key)
+                       summary, why, category, item.id, item.source, item.dedupe_key, 6)
 
 
 # ── text rendering (backward compat) ────────────────────────────

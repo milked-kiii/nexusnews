@@ -5,7 +5,10 @@
     {"name": "Google AI", "url": "https://blog.google/technology/ai/rss/"},
     {"name": "MIT Tech Review", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
     {"name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    {"name": "The Verge AI", "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"}
+    {"name": "The Verge AI", "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"},
+    {"name": "InfoQ中国", "url": "https://www.infoq.cn/feed"},
+    {"name": "DeepSeek", "url": "https://github.com/deepseek-ai/DeepSeek-V3/releases.atom"},
+    {"name": "GitHub AI", "url": "https://github.blog/ai-and-ml/feed/"}
   ],
   "database": "var/nexusnews.db",
   "output": "var/latest-digest.txt",

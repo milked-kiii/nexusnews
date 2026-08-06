@@ -8,7 +8,7 @@ from typing import Callable
 
 from .config import Config
 from .delivery import send_feishu, send_feishu_card, send_feishu_chat, send_feishu_dm
-from .digest import (DigestEntry, cutoff, local_summarize, render_card, render_digest,
+from .digest import (DigestEntry, cutoff, filter_entries, local_summarize, render_card, render_digest,
                      render_empty_digest, select_items)
 from .fetchers import PlatformFetcher, Transport
 from .models import Item, normalize_item
@@ -74,13 +74,23 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
     with SQLiteItemStore(database) as store:
         inserted = store.put_many(normalize_item(raw) for raw in fetched)
         recent = store.recent(since=cutoff(hours=48, now=now))
-    selected = select_items(recent, minimum=config.minimum, maximum=config.maximum)
+    
+    # Select generous candidate pool (3x maximum) for scoring before filtering
+    candidate_pool_size = config.maximum * 3
+    candidates = select_items(recent, minimum=config.minimum, maximum=candidate_pool_size)
+    
     card_mode = config.delivery_mode in ("card_dm", "card_chat")
     if summarizer is None:
         summarizer = (with_fallback(OpenAICompatibleSummarizer(config.llm_endpoint, config.llm_model, config.llm_api_key_env))
                       if config.llm_endpoint and config.llm_model else local_summarize)
-    entries = [summarizer(item) for item in selected]
-    if len(selected) < config.minimum:
+    
+    # Summarize all candidates to get relevance scores
+    all_entries = [summarizer(item) for item in candidates]
+    
+    # Filter by business relevance (≥6) and re-rank by score
+    entries = filter_entries(all_entries, maximum=config.maximum, min_relevance=6)
+    selected = [item for item in candidates if any(e.item_id == item.id for e in entries)]
+    if len(entries) < config.minimum:
         text = render_empty_digest(generated_at=now, failed_sources=failed_sources)
     elif card_mode:
         text = render_card(entries, generated_at=now, failed_sources=failed_sources)
@@ -89,7 +99,7 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
     output = Path(config.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text + "\n", encoding="utf-8")
-    logging.info("digest generated", extra={"fetched": len(fetched), "inserted": inserted, "selected": len(selected)})
+    logging.info("digest generated", extra={"fetched": len(fetched), "inserted": inserted, "candidates": len(candidates), "scored": len(all_entries), "selected": len(entries)})
     if not dry_run:
         if card_mode:
             _deliver_card(config, text)
