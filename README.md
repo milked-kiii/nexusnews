@@ -19,6 +19,35 @@ into `RawItem` values. Inject a custom `Transport` in tests or for alternative H
 clients. Network and XML/JSON failures raise `FetchError`; invalid normalized fields
 raise `ValueError`.
 
+## Social-platform sources
+
+`config.example.json` includes ready-to-customize sources for Medium, Reddit, X and
+Discord. Use them only for sources your account is permitted to read. The pipeline
+uses official APIs where credentials are required; it does not scrape logged-in pages.
+
+- **Medium**: use a supported RSS feed such as `https://medium.com/feed/@username`,
+  `https://medium.com/feed/publication`, or `https://medium.com/feed/tag/topic`.
+- **Reddit**: point `url` at a listing JSON endpoint, for example
+  `https://www.reddit.com/r/MachineLearning/new.json?limit=20`.
+- **X**: set `kind` to `x`, provide a recent-search `query`, and export the bearer
+  token named by `token_env` (for example `X_BEARER_TOKEN`).
+- **Discord**: create a bot, add it to the server, grant it `VIEW_CHANNEL` and
+  `READ_MESSAGE_HISTORY` for the target channel, then provide its `channel_id` and
+  export the bot token named by `token_env` (for example `DISCORD_BOT_TOKEN`).
+
+Example environment setup (keep real credentials out of the configuration file):
+
+```sh
+export X_BEARER_TOKEN='...'
+export DISCORD_BOT_TOKEN='...'
+python3 -m nexusnews --config config.json --dry-run
+```
+
+X recent search is limited to the access level and recent-history window allowed by
+your X developer account. Discord collection retrieves the newest messages in each
+configured channel (up to 100 per run), and may return empty message content unless
+the bot has the Message Content privileged intent where Discord requires it.
+
 Run tests without network access:
 
 ```sh

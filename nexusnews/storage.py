@@ -20,9 +20,14 @@ class SQLiteItemStore:
                 content TEXT,
                 published_at TEXT,
                 dedupe_key TEXT NOT NULL UNIQUE,
-                stored_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                stored_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                delivered INTEGER NOT NULL DEFAULT 0
             )
         """)
+        try:
+            self._connection.execute("ALTER TABLE items ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         self._connection.execute("""
             CREATE TABLE IF NOT EXISTS feedback (
                 digest_id TEXT NOT NULL, scope TEXT NOT NULL, target_id TEXT NOT NULL,
@@ -56,16 +61,24 @@ class SQLiteItemStore:
         return [Item(**dict(row)) for row in rows]
 
     def recent(self, *, since: str, limit: int = 500) -> list[Item]:
-        """Return published items in newest-first order."""
+        """Return undelivered published items in newest-first order."""
         if limit < 1:
             raise ValueError("limit must be positive")
         rows = self._connection.execute(
             """SELECT id, source, title, url, content, published_at, dedupe_key
-               FROM items WHERE published_at IS NOT NULL AND published_at >= ?
+               FROM items WHERE published_at IS NOT NULL AND published_at >= ? AND delivered = 0
                ORDER BY published_at DESC, id LIMIT ?""",
             (since, limit),
         ).fetchall()
         return [Item(**dict(row)) for row in rows]
+
+    def mark_delivered(self, item_ids: Iterable[str]) -> None:
+        """Mark items as delivered so they won't appear in future digests."""
+        with self._connection:
+            self._connection.executemany(
+                "UPDATE items SET delivered = 1 WHERE id = ?",
+                ((iid,) for iid in item_ids),
+            )
 
     def record_feedback(self, *, digest_id: str, scope: str, vote: str, user_id: str,
                         item_id: str | None = None, source_id: str | None = None, event_key: str | None = None) -> None:

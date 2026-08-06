@@ -38,8 +38,9 @@ class DigestTests(unittest.TestCase):
 
     def test_output_contains_all_required_fields(self):
         text = render_digest([DigestEntry("标题", "来源", "https://example.com", "中文摘要", "影响解读")], generated_at=datetime(2026, 8, 5, tzinfo=timezone.utc))
-        for expected in ("🤖 AI 日报｜2026-08-05（共 1 条）", "标题", "来源：来源", "原文：[阅读原文](https://example.com)", "摘要：中文摘要", "为什么重要：影响解读", "1好 / 1差", "本期好 / 本期差"):
+        for expected in ("🤖 AI 日报｜2026-08-05（共 1 条）", "标题", "来源：来源", "原文：[阅读原文](https://example.com)", "摘要：中文摘要", "为什么重要：影响解读"):
             self.assertIn(expected, text)
+        self.assertNotIn("反馈", text)
 
     def test_config_validation(self):
         with tempfile.TemporaryDirectory() as directory:

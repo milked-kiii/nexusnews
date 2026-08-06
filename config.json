@@ -1,0 +1,19 @@
+{
+  "sources": [
+    {"name": "OpenAI", "url": "https://openai.com/news/rss.xml"},
+    {"name": "HuggingFace", "url": "https://huggingface.co/blog/feed.xml"},
+    {"name": "Google AI", "url": "https://blog.google/technology/ai/rss/"},
+    {"name": "MIT Tech Review", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
+    {"name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
+    {"name": "The Verge AI", "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"}
+  ],
+  "database": "var/nexusnews.db",
+  "output": "var/latest-digest.txt",
+  "minimum": 1,
+  "maximum": 10,
+  "delivery_mode": "card_dm",
+  "feishu_open_id": "ou_1a9693a8c9b1046e97a143bf402280f0",
+  "llm_endpoint": "https://api.deepseek.com/v1/chat/completions",
+  "llm_model": "deepseek-chat",
+  "llm_api_key_env": "NEXUSNEWS_LLM_API_KEY"
+}

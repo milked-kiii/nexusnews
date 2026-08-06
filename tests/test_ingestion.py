@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nexusnews.fetchers import APIFetcher, FetchError, RSSFetcher
+from nexusnews.fetchers import APIFetcher, FetchError, RSSFetcher, parse_discord, parse_reddit, parse_x
 from nexusnews.models import RawItem, normalize_item
 from nexusnews.storage import SQLiteItemStore
 
@@ -44,6 +44,15 @@ class FetcherTests(unittest.TestCase):
             APIFetcher(FakeTransport(b"{}"), lambda data: data["missing"]).fetch("https://api")
         with self.assertRaisesRegex(FetchError, "timeout"):
             APIFetcher(FakeTransport(error=FetchError("timeout fetching https://api")), list).fetch("https://api")
+
+    def test_platform_payloads_are_converted_to_raw_items(self):
+        reddit = parse_reddit({"data": {"children": [{"data": {"name": "t3_1", "title": "Post", "permalink": "/r/test/1", "selftext": "Body", "created_utc": 0}}]}}, source="Reddit")
+        self.assertEqual(reddit[0].url, "https://www.reddit.com/r/test/1")
+        self.assertEqual(reddit[0].published_at, "1970-01-01T00:00:00+00:00")
+        x = parse_x({"data": [{"id": "2", "text": "Hello", "author_id": "3", "created_at": "2025-08-05T00:00:00Z"}], "includes": {"users": [{"id": "3", "username": "alice"}]}}, source="X")
+        self.assertEqual(x[0].url, "https://x.com/alice/status/2")
+        discord = parse_discord([{ "id": "4", "content": "News", "timestamp": "2025-08-05T00:00:00Z", "guild_id": "5", "author": {"username": "bob"}}], source="Discord", channel_id="6")
+        self.assertEqual(discord[0].url, "https://discord.com/channels/5/6/4")
 
 
 class NormalizeAndStorageTests(unittest.TestCase):

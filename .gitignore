@@ -1,1 +1,8 @@
-var/
+__pycache__/
+*.pyc
+var/*.db
+var/*.log
+var/*.txt
+.env
+*.pyo
+.DS_Store
