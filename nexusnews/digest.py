@@ -140,8 +140,9 @@ def render_digest(entries: list[DigestEntry], *, generated_at: datetime | None =
     digest_id = digest_id or generated_at.strftime("%Y-%m-%d")
     lines = [f"🤖 AI 日报｜{generated_at:%Y-%m-%d}（共 {len(entries)} 条）", "过去 48 小时的低噪音精选。", ""]
     for number, entry in enumerate(entries, 1):
+        summary_line = entry.summary if entry.summary.startswith(">") else f"> 摘要：{entry.summary}"
         lines.extend([f"{number}. {entry.title}", f"来源：{entry.source}", f"原文：[阅读原文]({entry.url})",
-                      f"> 摘要：{entry.summary}", f"为什么重要：{entry.why_important}", ""])
+                      summary_line, f"为什么重要：{entry.why_important}", ""])
     if failed_sources:
         lines.append(f"注：今日有 {failed_sources} 个信源暂时不可用，已基于其余来源完成筛选；不会用低质量内容补位。")
     return "\n".join(lines).rstrip()
@@ -196,11 +197,13 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
             
             # High-value indicator for coding/work Agent focus
             priority_badge = "🔥 " if entry.relevance_score >= 9 else ""
+            # Render summary as a quote line unless it already starts with one
+            summary_line = safe_summary if safe_summary.startswith(">") else f"> {safe_summary}"
             
             md = (
                 f"**{local_idx}. {priority_badge}{safe_title}**\n"
                 f"来源：{safe_source}\n\n"
-                f"> {safe_summary}\n\n"
+                f"{summary_line}\n\n"
                 f"💡 {safe_why}"
             )
 
