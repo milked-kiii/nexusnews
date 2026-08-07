@@ -4,6 +4,8 @@ on:
   schedule:
     # 每天北京时间 10:00 (UTC+8 = 02:00 UTC)
     - cron: "0 2 * * *"
+    # 临时测试：今天 10:30 (02:30 UTC)
+    - cron: "30 2 * * *"
   workflow_dispatch:
 
 jobs:
