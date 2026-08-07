@@ -193,11 +193,14 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
             safe_summary = _escape_md(entry.summary)[:200]
             safe_why = _escape_md(entry.why_important)[:150]
             safe_source = _escape_md(entry.source)
-
+            
+            # High-value indicator for coding/work Agent focus
+            priority_badge = "🔥 " if entry.relevance_score >= 9 else ""
+            
             md = (
-                f"**{local_idx}. {safe_title}**\n"
-                f"来源：{safe_source}\n\n"
-                f"{safe_summary}\n\n"
+                f"**{local_idx}. {priority_badge}{safe_title}**\\n"
+                f"来源：{safe_source}\\n\\n"
+                f"{safe_summary}\\n\\n"
                 f"💡 {safe_why}"
             )
 
