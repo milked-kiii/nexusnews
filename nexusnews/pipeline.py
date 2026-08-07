@@ -92,7 +92,7 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
     entries = filter_entries(all_entries, maximum=config.maximum, min_relevance=6)
     selected = [item for item in candidates if any(e.item_id == item.id for e in entries)]
     if len(entries) < config.minimum:
-        text = render_empty_digest(generated_at=now, failed_sources=failed_sources)
+        text = render_empty_digest(generated_at=now, failed_sources=failed_sources, minimum=config.minimum)
     elif card_mode:
         text = render_card(entries, generated_at=now, failed_sources=failed_sources)
     else:
@@ -104,9 +104,10 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
     if not dry_run:
         if card_mode:
             # Optionally sync the digest to a Feishu cloud doc and append the
-            # doc link to the card before delivery.
+            # doc link to the card before delivery. Only when there is actual
+            # content (empty digest has nothing worth archiving).
             doc_url = None
-            if config.doc_sync:
+            if config.doc_sync and len(entries) >= config.minimum:
                 open_id = config.feishu_open_id or os.environ.get(config.feishu_open_id_env, "")
                 if open_id:
                     title = f"🤖 AI 日报 {now.astimezone(timezone.utc).strftime('%Y-%m-%d')}"

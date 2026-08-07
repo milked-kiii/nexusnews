@@ -141,15 +141,15 @@ def render_digest(entries: list[DigestEntry], *, generated_at: datetime | None =
     lines = [f"🤖 AI 日报｜{generated_at:%Y-%m-%d}（共 {len(entries)} 条）", "过去 48 小时的低噪音精选。", ""]
     for number, entry in enumerate(entries, 1):
         lines.extend([f"{number}. {entry.title}", f"来源：{entry.source}", f"原文：[阅读原文]({entry.url})",
-                      f"摘要：{entry.summary}", f"为什么重要：{entry.why_important}", ""])
+                      f"> 摘要：{entry.summary}", f"为什么重要：{entry.why_important}", ""])
     if failed_sources:
         lines.append(f"注：今日有 {failed_sources} 个信源暂时不可用，已基于其余来源完成筛选；不会用低质量内容补位。")
     return "\n".join(lines).rstrip()
 
 
-def render_empty_digest(*, generated_at: datetime, failed_sources: int = 0) -> str:
+def render_empty_digest(*, generated_at: datetime, failed_sources: int = 0, minimum: int = 3) -> str:
     text = (f"🤖 AI 日报｜{generated_at:%Y-%m-%d}\n"
-            "今天没有凑够 5 条达到质量阈值的 AI 动态，因此不发送常规精选。明天会继续为你筛选。")
+            f"今天没有凑够 {minimum} 条达到质量阈值的 AI 动态，因此不发送常规精选。明天会继续为你筛选。")
     if failed_sources:
         text += f"\n注：今日有 {failed_sources} 个信源暂时不可用，已基于其余来源完成筛选；不会用低质量内容补位。"
     return text
