@@ -200,7 +200,7 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
             md = (
                 f"**{local_idx}. {priority_badge}{safe_title}**\n"
                 f"来源：{safe_source}\n\n"
-                f"{safe_summary}\n\n"
+                f"> {safe_summary}\n\n"
                 f"💡 {safe_why}"
             )
 
