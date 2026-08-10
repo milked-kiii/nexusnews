@@ -77,7 +77,6 @@
   "maximum": 5,
   "delivery_mode": "card_chat",
   "doc_sync": false,
-  "feishu_open_id": "ou_1a9693a8c9b1046e97a143bf402280f0",
   "llm_endpoint": "https://api.deepseek.com/v1/chat/completions",
   "llm_model": "deepseek-chat",
   "llm_api_key_env": "NEXUSNEWS_LLM_API_KEY",
