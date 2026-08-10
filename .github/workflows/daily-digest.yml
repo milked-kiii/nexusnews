@@ -2,10 +2,8 @@ name: AI 日报推送
 
 on:
   schedule:
-    # 每天北京时间 10:00 (UTC+8 = 02:00 UTC)
-    - cron: "0 2 * * *"
-    # 临时测试：今天 10:30 (02:30 UTC)
-    - cron: "30 2 * * *"
+    # 每天北京时间 11:00 (UTC+8 = 03:00 UTC)
+    - cron: "0 3 * * *"
   workflow_dispatch:
 
 jobs:

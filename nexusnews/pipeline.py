@@ -10,7 +10,7 @@ from .config import Config
 from .delivery import send_feishu, send_feishu_card, send_feishu_chat, send_feishu_dm
 from .digest import (DigestEntry, cutoff, filter_entries, local_summarize, render_card, render_digest,
                      render_empty_digest, select_items)
-from .feishu_doc import sync_digest_to_doc
+from .feishu_doc import sync_digest_to_doc, sync_entries_to_doc
 from .fetchers import PlatformFetcher, Transport
 from .models import Item, normalize_item
 from .llm import OpenAICompatibleSummarizer, with_fallback
@@ -74,16 +74,28 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
         raise RuntimeError("all configured sources failed or returned no items")
     with SQLiteItemStore(database) as store:
         inserted = store.put_many(normalize_item(raw) for raw in fetched)
-        recent = store.recent(since=cutoff(hours=48, now=now))
-    
-    # Select generous candidate pool (3x maximum) for scoring before filtering
-    candidate_pool_size = config.maximum * 3
+        # 96h window: balances "timely" against weekly-publish sources like
+        # 36氪AI融资 whose latest entry may be 2-3 days old.
+        recent = store.recent(since=cutoff(hours=96, now=now))
+
+    # Select generous candidate pool (6x maximum) for scoring before filtering.
+    # Larger pool ensures slow-moving sources (Qoder, Cursor, Trae, 公众号) survive
+    # the sort by recency that would otherwise push them below chatty feeds.
+    candidate_pool_size = config.maximum * 6
     candidates = select_items(recent, minimum=config.minimum, maximum=candidate_pool_size)
     
     card_mode = config.delivery_mode in ("card_dm", "card_chat")
     if summarizer is None:
-        summarizer = (with_fallback(OpenAICompatibleSummarizer(config.llm_endpoint, config.llm_model, config.llm_api_key_env))
-                      if config.llm_endpoint and config.llm_model else local_summarize)
+        if config.llm_endpoint and config.llm_model:
+            summarizer = with_fallback(
+                OpenAICompatibleSummarizer(
+                    config.llm_endpoint, config.llm_model, config.llm_api_key_env,
+                    vc_watchlist=config.vc_watchlist,
+                ),
+                vc_watchlist=config.vc_watchlist,
+            )
+        else:
+            summarizer = lambda item: local_summarize(item, vc_watchlist=config.vc_watchlist)  # noqa: E731
     
     # Summarize all candidates to get relevance scores
     all_entries = [summarizer(item) for item in candidates]
@@ -111,10 +123,9 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
                 open_id = config.feishu_open_id or os.environ.get(config.feishu_open_id_env, "")
                 if open_id:
                     title = f"🤖 AI 日报 {now.astimezone(timezone.utc).strftime('%Y-%m-%d')}"
-                    doc_text = render_digest(entries, generated_at=now, failed_sources=failed_sources)
-                    doc = sync_digest_to_doc(title, doc_text.splitlines(), open_id,
-                                             app_id_env=config.feishu_app_id_env,
-                                             app_secret_env=config.feishu_app_secret_env)
+                    doc = sync_entries_to_doc(title, entries, open_id,
+                                              app_id_env=config.feishu_app_id_env,
+                                              app_secret_env=config.feishu_app_secret_env)
                     doc_url = doc.get("url")
                     logging.info("digest synced to doc", extra={"doc_url": doc_url})
             if doc_url:

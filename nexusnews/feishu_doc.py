@@ -65,10 +65,23 @@ def _run(call: object, *, attempts: int = 3, timeout: float = 15, delay: float =
     raise DeliveryError(f"Feishu doc API failed after {attempts} attempts: {last}") from last
 
 
-def _text_run(content: str, url: str | None = None) -> dict:
-    run: dict = {"text_run": {"content": content}}
+def _text_run(content: str, url: str | None = None, *, bold: bool = False,
+              color: int | None = None) -> dict:
+    """Build a text_run with optional link/bold/color styling.
+
+    ``color`` is Feishu's preset palette index (1-7): 1=red, 2=orange, 3=yellow,
+    4=green, 5=blue, 6=indigo, 7=violet.
+    """
+    style: dict = {}
     if url:
-        run["text_run"]["text_element_style"] = {"link": {"url": url}}
+        style["link"] = {"url": url}
+    if bold:
+        style["bold"] = True
+    if color is not None:
+        style["text_color"] = color
+    run: dict = {"text_run": {"content": content}}
+    if style:
+        run["text_run"]["text_element_style"] = style
     return run
 
 
@@ -236,6 +249,73 @@ def sync_digest_to_doc(title: str, lines: list[str], open_id: str,
     """
     doc = create_doc(title, app_id_env=app_id_env, app_secret_env=app_secret_env)
     blocks = [_heading(title, 1)] + [_divider()] + markdown_to_docx_blocks(lines)
+    add_blocks(doc["document_id"], blocks, app_id_env=app_id_env, app_secret_env=app_secret_env)
+    grant_permission(doc["document_id"], open_id, app_id_env=app_id_env, app_secret_env=app_secret_env)
+    return doc
+
+
+# Map our relevance score (0-10) to Feishu's preset text_color palette.
+# 1=red, 2=orange, 3=yellow, 4=green, 5=blue, 6=indigo, 7=violet
+def _score_to_color(score: int) -> int | None:
+    if score >= 9:
+        return 3  # yellow for top picks
+    if score >= 7:
+        return 5  # blue for solid picks
+    return None
+
+
+def sync_entries_to_doc(title: str, entries: list, open_id: str,
+                        *, app_id_env: str = "FEISHU_APP_ID",
+                        app_secret_env: str = "FEISHU_APP_SECRET") -> dict:
+    """Sync digest entries directly (bypassing markdown) so titles carry colors.
+
+    Used by the card-digest path so the doc visually matches the card: 🔥
+    high-priority entries get yellow titles, ⚡ 7-8 get blue, 📌 others default.
+    Each entry shows its publish time alongside the source so readers can spot
+    stale content (e.g. a WeChat re-post of a months-old article).
+    """
+    from .digest import CATEGORIES, CATEGORY_ORDER, _format_published
+
+    doc = create_doc(title, app_id_env=app_id_env, app_secret_env=app_secret_env)
+    blocks: list[dict] = [_heading(title, 1), _divider()]
+
+    grouped: dict[str, list] = {}
+    for entry in entries:
+        grouped.setdefault(entry.category, []).append(entry)
+
+    for cat in CATEGORY_ORDER:
+        if cat not in grouped:
+            continue
+        items = grouped[cat]
+        blocks.append(_heading(f"{CATEGORIES[cat]} ({len(items)}条)", 2))
+        for idx, entry in enumerate(items, 1):
+            color = _score_to_color(entry.relevance_score)
+            if entry.relevance_score >= 9:
+                badge = "🔥"
+            elif entry.relevance_score >= 7:
+                badge = "⚡"
+            else:
+                badge = "📌"
+            title_text = f"{badge} {idx}. {entry.title}"
+            # Don't put the URL on the title itself: Feishu renders link text
+            # in the brand blue, which overrides our text_color. Put the title
+            # plain, then a separate "阅读原文" link line below.
+            title_run = _text_run(title_text, bold=True, color=color)
+            blocks.append({
+                "block_type": _BLOCK_TEXT,
+                "text": {"elements": [title_run], "style": {}},
+            })
+            published = _format_published(entry.published_at)
+            meta_run = _text_run(f"{entry.source} · {published}")
+            link_run = _text_run("  🔗 阅读原文", url=entry.url)
+            blocks.append({
+                "block_type": _BLOCK_TEXT,
+                "text": {"elements": [meta_run, link_run], "style": {}},
+            })
+            blocks.append(_quote(entry.summary))
+            blocks.append(_paragraph(f"💡 {entry.why_important}"))
+            blocks.append(_divider())
+
     add_blocks(doc["document_id"], blocks, app_id_env=app_id_env, app_secret_env=app_secret_env)
     grant_permission(doc["document_id"], open_id, app_id_env=app_id_env, app_secret_env=app_secret_env)
     return doc

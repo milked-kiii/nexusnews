@@ -61,14 +61,27 @@ class SQLiteItemStore:
         return [Item(**dict(row)) for row in rows]
 
     def recent(self, *, since: str, limit: int = 500) -> list[Item]:
-        """Return undelivered published items in newest-first order."""
+        """Return undelivered published items in newest-first order.
+
+        Items with no published_at (e.g. webpage-scraped cards whose listing
+        page didn't expose a date) fall back to stored_at — the time we first
+        saw them — so they aren't silently dropped by the cutoff.
+        """
         if limit < 1:
             raise ValueError("limit must be positive")
+        # stored_at uses SQLite's CURRENT_TIMESTAMP format ("YYYY-MM-DD HH:MM:SS"),
+        # while `since` is ISO-8601 with a trailing "Z". Convert for comparison.
+        since_sqlite = since.replace("T", " ").replace("Z", "").split(".")[0]
         rows = self._connection.execute(
             """SELECT id, source, title, url, content, published_at, dedupe_key
-               FROM items WHERE published_at IS NOT NULL AND published_at >= ? AND delivered = 0
-               ORDER BY published_at DESC, id LIMIT ?""",
-            (since, limit),
+               FROM items
+               WHERE delivered = 0
+                 AND (
+                       (published_at IS NOT NULL AND published_at >= ?)
+                       OR (published_at IS NULL AND stored_at >= ?)
+                     )
+               ORDER BY COALESCE(published_at, stored_at) DESC, id LIMIT ?""",
+            (since, since_sqlite, limit),
         ).fetchall()
         return [Item(**dict(row)) for row in rows]
 

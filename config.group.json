@@ -1,22 +1,125 @@
 {
   "sources": [
-    {"name": "OpenAI", "url": "https://openai.com/news/rss.xml"},
-    {"name": "HuggingFace", "url": "https://huggingface.co/blog/feed.xml"},
-    {"name": "Google AI", "url": "https://blog.google/technology/ai/rss/"},
-    {"name": "MIT Tech Review", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
-    {"name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    {"name": "The Verge AI", "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"},
-    {"name": "InfoQ中国", "url": "https://www.infoq.cn/feed"},
-    {"name": "DeepSeek", "url": "https://github.com/deepseek-ai/DeepSeek-V3/releases.atom"},
-    {"name": "GitHub AI", "url": "https://github.blog/ai-and-ml/feed/"}
+    {
+      "name": "Trae",
+      "url": "https://www.trae.ai/rss.xml"
+    },
+    {
+      "name": "Qoder",
+      "url": "https://qoder.com/blog",
+      "kind": "webpage",
+      "link_pattern": "^/blog/[a-z0-9][\\w.-]*$",
+      "exclude_pattern": "^/blog/(topic|tag)/",
+      "limit": 30
+    },
+    {
+      "name": "Cursor",
+      "url": "https://cursor.com/blog",
+      "kind": "webpage",
+      "link_pattern": "^/blog/[a-z0-9][\\w.-]*$",
+      "exclude_pattern": "^/blog/(topic|tag)/",
+      "limit": 30
+    },
+    {
+      "name": "机器之心",
+      "url": "https://wechat2rss.xlab.app/feed/51e92aad2728acdd1fda7314be32b16639353001.xml"
+    },
+    {
+      "name": "阿里技术",
+      "url": "https://wechat2rss.xlab.app/feed/6e1f9b775f7a5841ac1a94310f0478b45a02ec01.xml"
+    },
+    {
+      "name": "字节跳动技术",
+      "url": "https://wechat2rss.xlab.app/feed/4025ea55575daf8bfd8227e68b28d9638b073267.xml"
+    },
+    {
+      "name": "腾讯技术工程",
+      "url": "https://wechat2rss.xlab.app/feed/9685937b45fe9c7a526dbc32e4f24ba879a65b9a.xml"
+    },
+    {
+      "name": "美团技术团队",
+      "url": "https://wechat2rss.xlab.app/feed/eb4d04149424a874693a51c6fdda0dba8673f5e4.xml"
+    },
+    {
+      "name": "OpenAI",
+      "url": "https://openai.com/news/rss.xml"
+    },
+    {
+      "name": "HuggingFace",
+      "url": "https://huggingface.co/blog/feed.xml"
+    },
+    {
+      "name": "Google AI",
+      "url": "https://blog.google/technology/ai/rss/"
+    },
+    {
+      "name": "DeepSeek",
+      "url": "https://github.com/deepseek-ai/DeepSeek-V3/releases.atom"
+    },
+    {
+      "name": "GitHub AI",
+      "url": "https://github.blog/ai-and-ml/feed/"
+    },
+    {
+      "name": "36氪快讯",
+      "url": "https://rsshub.rssforever.com/36kr/newsflashes",
+      "limit": 15
+    },
+    {
+      "name": "36氪AI融资",
+      "url": "https://rsshub.rssforever.com/36kr/search/articles/AI%E8%9E%8D%E8%B5%84",
+      "limit": 15
+    }
   ],
   "database": "var/nexusnews-group.db",
   "output": "var/latest-group-digest.txt",
   "minimum": 3,
   "maximum": 5,
   "delivery_mode": "card_chat",
-  "feishu_chat_id": "oc_0d266fec792fe5569d72ab3799a96b61",
+  "doc_sync": false,
+  "feishu_open_id": "ou_1a9693a8c9b1046e97a143bf402280f0",
   "llm_endpoint": "https://api.deepseek.com/v1/chat/completions",
   "llm_model": "deepseek-chat",
-  "llm_api_key_env": "NEXUSNEWS_LLM_API_KEY"
+  "llm_api_key_env": "NEXUSNEWS_LLM_API_KEY",
+  "vc_watchlist": [
+    "红杉中国",
+    "红杉资本",
+    "Sequoia",
+    "高瓴创投",
+    "高瓴",
+    "Hillhouse",
+    "源码资本",
+    "Source Code",
+    "真格基金",
+    "真格",
+    "ZhenFund",
+    "IDG资本",
+    "经纬创投",
+    "经纬",
+    "Matrix Partners",
+    "创新工场",
+    "Sinovation",
+    "启明创投",
+    "Qiming",
+    "GGV",
+    "纪源资本",
+    "蓝驰创投",
+    "BlueRun",
+    "线性资本",
+    "Linear Capital",
+    "五源资本",
+    "5Y Capital",
+    "a16z",
+    "Andreessen Horowitz",
+    "Y Combinator",
+    "Benchmark",
+    "Accel",
+    "Lightspeed",
+    "光速",
+    "Bessemer",
+    "Greylock",
+    "Khosla",
+    "Index Ventures"
+  ],
+  "feishu_chat_id": "oc_0d266fec792fe5569d72ab3799a96b61"
 }

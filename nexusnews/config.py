@@ -14,6 +14,10 @@ class Source:
     channel_id: str | None = None
     token_env: str | None = None
     limit: int = 20
+    # webpage kind options
+    link_pattern: str | None = None
+    title_group: str | None = None
+    exclude_pattern: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,18 +38,22 @@ class Config:
     llm_endpoint: str | None = None
     llm_model: str | None = None
     llm_api_key_env: str = "NEXUSNEWS_LLM_API_KEY"
+    vc_watchlist: tuple[str, ...] = ()
 
 
 def load_config(path: str | Path) -> Config:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         sources = tuple(Source(**row) for row in data["sources"])
-        config = Config(sources=sources, **{k: v for k, v in data.items() if k != "sources"})
+        top_level = {k: v for k, v in data.items() if k != "sources"}
+        if "vc_watchlist" in top_level:
+            top_level["vc_watchlist"] = tuple(top_level["vc_watchlist"])
+        config = Config(sources=sources, **top_level)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid config {path}: {exc}") from exc
     if not sources:
         raise ValueError("config must contain at least one source")
-    supported_kinds = {"rss", "medium", "reddit", "x", "discord"}
+    supported_kinds = {"rss", "medium", "reddit", "x", "discord", "webpage"}
     for source in sources:
         if source.kind not in supported_kinds:
             raise ValueError(f"unsupported source kind: {source.kind}")
@@ -53,6 +61,11 @@ def load_config(path: str | Path) -> Config:
             raise ValueError(f"source {source.name!r} limit must be between 1 and 100")
         if source.kind in {"rss", "medium", "reddit"} and not source.url:
             raise ValueError(f"source {source.name!r} requires url")
+        if source.kind == "webpage":
+            if not source.url:
+                raise ValueError(f"webpage source {source.name!r} requires url")
+            if not source.link_pattern:
+                raise ValueError(f"webpage source {source.name!r} requires link_pattern")
         if source.kind == "x" and (not source.query or not source.token_env):
             raise ValueError(f"X source {source.name!r} requires query and token_env")
         if source.kind == "discord" and (not source.channel_id or not source.token_env):

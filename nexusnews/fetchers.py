@@ -2,16 +2,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import unescape
 import json
 import os
 from pathlib import Path
+import re
 from typing import Callable, Mapping, Protocol, Sequence
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 import xml.etree.ElementTree as ET
 
 from .models import RawItem
+
+
+class _RedirectWith308(HTTPRedirectHandler):
+    """urllib's redirect_request only handles 301/302/303/307 — 308 (Permanent
+    Redirect, RFC 7538) is rejected even though it is semantically a GET/HEAD
+    redirect. Override redirect_request to allow 308 for GET/HEAD."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if code == 308 and req.get_method() in ("GET", "HEAD"):
+            # Re-implement the GET/HEAD branch without the strict code check.
+            from urllib.request import Request
+            newurl = newurl.replace(" ", "%20")
+            newheaders = {k: v for k, v in req.headers.items()
+                          if k.lower() not in ("content-length", "content-type")}
+            return Request(newurl, headers=newheaders,
+                           origin_req_host=req.origin_req_host,
+                           unverifiable=True)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    def http_error_307(self, req, fp, code, msg, headers):
+        return self.http_error_302(req, fp, code, msg, headers)
+
+    def http_error_308(self, req, fp, code, msg, headers):
+        return self.http_error_302(req, fp, code, msg, headers)
+
+
+_OPENER = build_opener(_RedirectWith308)
 
 
 class FetchError(RuntimeError):
@@ -25,7 +54,7 @@ class Transport(Protocol):
 class UrlLibTransport:
     def get(self, url: str, *, timeout: float, headers: Mapping[str, str]) -> bytes:
         try:
-            with urlopen(Request(url, headers=dict(headers)), timeout=timeout) as response:
+            with _OPENER.open(Request(url, headers=dict(headers)), timeout=timeout) as response:
                 return response.read()
         except HTTPError as exc:
             raise FetchError(f"HTTP {exc.code} fetching {url}") from exc
@@ -92,6 +121,111 @@ class RSSFetcher:
                 published_at=_child_text(entry, "pubDate", "published", "updated"),
                 external_id=_child_text(entry, "guid", "id"),
             ))
+        return result
+
+
+_TAG = re.compile(r"<[^>]+>")
+_WS = re.compile(r"\s+")
+
+
+def _strip_html(fragment: str) -> str:
+    """Collapse an HTML fragment to plain text."""
+    return _WS.sub(" ", unescape(_TAG.sub(" ", fragment))).strip()
+
+
+# Match common English date prefixes like "Aug 6, 2026" / "Jul 30, 2026"
+_DATE_PREFIX = re.compile(
+    r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),\s+(\d{4})\b"
+)
+_MONTHS = {m.lower(): i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+
+
+def _extract_date(text: str) -> str | None:
+    """Pull a 'Mon DD, YYYY' date out of card text and return ISO format."""
+    m = _DATE_PREFIX.search(text)
+    if not m:
+        return None
+    month = _MONTHS.get(m.group(1)[:3].lower())
+    if not month:
+        return None
+    try:
+        dt = datetime(int(m.group(3)), month, int(m.group(2)), tzinfo=timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+    except ValueError:
+        return None
+
+
+@dataclass
+class WebpageFetcher:
+    """Scrape a blog/list page by extracting <a> cards pointing at article URLs.
+
+    Config shape (kind="webpage"):
+        url            — the listing page to GET
+        link_pattern   — regex matched against the href (e.g. r"^/blog/[\\w-]+$")
+        title_group    — optional regex with one capture group applied to the
+                         anchor's inner text to extract the title (default:
+                         whole inner text, whitespace collapsed)
+        exclude_pattern — optional regex; matching hrefs are skipped (e.g.
+                          r"^/blog/topic/" to skip category pages on Cursor)
+    """
+
+    transport: Transport
+    timeout: float = 10.0
+
+    _ANCHOR = re.compile(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.DOTALL | re.IGNORECASE)
+
+    def fetch(self, url: str, *, source: str, link_pattern: str,
+              title_group: str | None = None, exclude_pattern: str | None = None,
+              limit: int = 30) -> list[RawItem]:
+        headers = {
+            "Accept": "text/html,application/xhtml+xml",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        }
+        payload = self.transport.get(url, timeout=self.timeout, headers=headers)
+        html = payload.decode("utf-8", errors="ignore")
+
+        link_re = re.compile(link_pattern)
+        exclude_re = re.compile(exclude_pattern) if exclude_pattern else None
+        title_re = re.compile(title_group, re.DOTALL) if title_group else None
+
+        seen: set[str] = set()
+        result: list[RawItem] = []
+        for m in self._ANCHOR.finditer(html):
+            href, inner = m.group(1), m.group(2)
+            if not link_re.search(href):
+                continue
+            if exclude_re and exclude_re.search(href):
+                continue
+            absolute = urljoin(url, href)
+            if absolute in seen:
+                continue
+            seen.add(absolute)
+
+            text = _strip_html(inner)
+            if title_re:
+                tm = title_re.search(text)
+                if not tm:
+                    continue
+                title = tm.group(1).strip()
+            else:
+                title = text
+            if not title or len(title) < 6:
+                continue
+            # Inner text often holds extra metadata (date, author, blurb); keep
+            # a trimmed version as content so the LLM has signal for scoring.
+            content = text[:600] if len(text) > len(title) + 10 else None
+            result.append(RawItem(
+                source=source,
+                title=title[:300],
+                url=absolute,
+                content=content,
+                published_at=_extract_date(text),
+                external_id=absolute,
+            ))
+            if len(result) >= limit:
+                break
         return result
 
 
@@ -191,6 +325,14 @@ class PlatformFetcher:
         kind = source.kind
         if kind in {"rss", "medium"}:
             return RSSFetcher(self.transport, timeout=self.timeout).fetch(source.url, source=source.name)
+        if kind == "webpage":
+            return WebpageFetcher(self.transport, timeout=self.timeout).fetch(
+                source.url, source=source.name,
+                link_pattern=source.link_pattern,
+                title_group=source.title_group,
+                exclude_pattern=source.exclude_pattern,
+                limit=source.limit,
+            )
         if kind == "reddit":
             return APIFetcher(
                 self.transport,
