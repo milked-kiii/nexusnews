@@ -154,6 +154,8 @@ class DigestEntry:
     event_key: str = ""
     relevance_score: int = 0
     published_at: str | None = None
+    repo_created: str | None = None
+    repo_stars: int | None = None
 
 
 # Short names like "IDG", "YC", "GGV" easily false-positive when they appear as
@@ -225,9 +227,19 @@ def local_summarize(item: Item, *, vc_watchlist: tuple[str, ...] = ()) -> Digest
     base_score = 5
     if vc_hit:
         base_score = 7
+    # Parse GitHub repo metadata from content prefix
+    repo_created = None
+    repo_stars = None
+    if item.content and item.source.lower().startswith("github"):
+        import re as _re
+        m = _re.match(r"created:(\S+)\s+stars:(\d+)", item.content)
+        if m:
+            repo_created = m.group(1)
+            repo_stars = int(m.group(2))
+
     return DigestEntry(item.title, item.source, item.url or f"https://{host}" if host else "（无链接）",
                        summary, why, category, item.id, item.source, item.dedupe_key, base_score,
-                       published_at=item.published_at)
+                       published_at=item.published_at, repo_created=repo_created, repo_stars=repo_stars)
 
 
 # ── text rendering (backward compat) ────────────────────────────
@@ -353,6 +365,17 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
                 safe_source = _escape_md(entry.source)
                 safe_published = _escape_md(_format_published(entry.published_at))
 
+                # For GitHub repos, show created date + stars instead of source + published time
+                if _source_display_tier(entry.source) == 1 and entry.repo_created:
+                    stars_text = f"⭐ {entry.repo_stars}" if entry.repo_stars else "⭐ ?"
+                    meta_line = f"<font color='grey'>📦 创建于 {entry.repo_created} · {stars_text}</font>"
+                elif _source_display_tier(entry.source) == 1:
+                    # Fallback for GitHub items without parsed meta
+                    repo_name = entry.url.replace("https://github.com/", "") if "github.com" in entry.url else ""
+                    meta_line = f"<font color='grey'>📦 {repo_name}</font>" if repo_name else f"<font color='grey'>{safe_source} · {safe_published}</font>"
+                else:
+                    meta_line = f"<font color='grey'>{safe_source} · {safe_published}</font>"
+
                 # Three-tier visual priority: 🔥 yellow for 9-10, ⚡ blue for 7-8,
                 # default bold for the rest. Both emoji and color carry the signal.
                 if entry.relevance_score >= 9:
@@ -369,7 +392,7 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
 
                 md = (
                     f"{title_html}\n"
-                    f"<font color='grey'>{safe_source} · {safe_published}</font>\n\n"
+                    f"{meta_line}\n\n"
                     f"{summary_line}\n\n"
                     f"💡 {safe_why}"
                 )

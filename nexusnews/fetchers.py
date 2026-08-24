@@ -397,10 +397,13 @@ def parse_github_search(data: object, *, source: str) -> Sequence[RawItem]:
         if not full_name:
             continue
         description = _string(repo.get("description"))
-        meta = []
-        stars = repo.get("stargazers_count")
-        if isinstance(stars, int):
-            meta.append(f"⭐ {stars}")
+        # Pack repo metadata into content prefix for card display:
+        # "created:YYYY-MM-DD stars:N ⭐ · language · topics · description"
+        created_at = _string(repo.get("created_at"))
+        created_date = created_at[:10] if created_at else "未知"
+        star_count = repo.get("stargazers_count")
+        star_str = str(star_count) if isinstance(star_count, int) else "0"
+        meta = [f"created:{created_date} stars:{star_str} ⭐"]
         language = _string(repo.get("language"))
         if language:
             meta.append(language)

@@ -116,6 +116,16 @@ class OpenAICompatibleSummarizer:
                 why = (why + " 值得持续关注。")[:75]
             why = (why or "（暂无解读）")[:75]
             
+            # Parse GitHub repo metadata from content prefix
+            repo_created = None
+            repo_stars = None
+            if item.content and item.source.lower().startswith("github"):
+                import re as _re
+                m = _re.match(r"created:(\S+)\s+stars:(\d+)", item.content)
+                if m:
+                    repo_created = m.group(1)
+                    repo_stars = int(m.group(2))
+
             return DigestEntry(
                 result["title"].strip()[:28],
                 item.source,
@@ -128,6 +138,8 @@ class OpenAICompatibleSummarizer:
                 item.dedupe_key,
                 relevance_score,
                 published_at=item.published_at,
+                repo_created=repo_created,
+                repo_stars=repo_stars,
             )
         except LLMSummaryError:
             raise
