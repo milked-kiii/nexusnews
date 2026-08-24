@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nexusnews.fetchers import APIFetcher, FetchError, RSSFetcher, parse_discord, parse_github, parse_reddit, parse_x
+from nexusnews.fetchers import APIFetcher, FetchError, RSSFetcher, parse_discord, parse_github_search, parse_reddit, parse_x
 from nexusnews.models import RawItem, normalize_item
 from nexusnews.storage import SQLiteItemStore
 
@@ -70,12 +70,12 @@ class FetcherTests(unittest.TestCase):
             "stargazers_count": 1234, "language": "Python", "topics": ["llm", "inference"],
             "created_at": "2026-08-20T01:02:03Z",
         }]}
-        items = parse_github(data, source="GitHub 热榜")
+        items = parse_github_search(data, source="GitHub 热榜")
         self.assertEqual(items[0].title, "acme/hot-repo: Fast LLM serving")
         self.assertEqual(items[0].url, "https://github.com/acme/hot-repo")
         self.assertEqual(items[0].published_at, "2026-08-20T01:02:03Z")
         self.assertEqual(items[0].external_id, "R_7")
-        self.assertIn("⭐ 1234", items[0].content)
+        self.assertIn("stars:1234 ⭐", items[0].content or "")
         x = parse_x({"data": [{"id": "2", "text": "Hello", "author_id": "3", "created_at": "2025-08-05T00:00:00Z"}], "includes": {"users": [{"id": "3", "username": "alice"}]}}, source="X")
         self.assertEqual(x[0].url, "https://x.com/alice/status/2")
         discord = parse_discord([{ "id": "4", "content": "News", "timestamp": "2025-08-05T00:00:00Z", "guild_id": "5", "author": {"username": "bob"}}], source="Discord", channel_id="6")
