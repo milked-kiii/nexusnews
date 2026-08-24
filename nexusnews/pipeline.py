@@ -93,7 +93,8 @@ def _apply_primary_quota(
     maximum: int,
     quota: float,
 ) -> list[DigestEntry]:
-    """Ensure at least `quota` fraction of final entries come from primary sources.
+    """Ensure at least `quota` fraction of final entries come from primary sources,
+    and at least `min_per_source` entries each from Reddit and GitHub when available.
 
     If not enough primary entries exist, backfill with secondary sources but
     never exceed `maximum`. If the day is thin on primary sources, we allow
@@ -109,16 +110,31 @@ def _apply_primary_quota(
     primary = [e for e in sorted_entries if _is_primary_source(e.source)]
     secondary = [e for e in sorted_entries if not _is_primary_source(e.source)]
 
-    # Always take all primary entries first (up to maximum)
+    # Split primary by source type
+    reddit = [e for e in primary if e.source.lower().startswith("reddit")]
+    github = [e for e in primary if e.source.lower().startswith("github")]
+
+    # Guarantee at least min_per_source from each primary type when available
+    min_per_source = 2
     selected: list[DigestEntry] = []
-    selected.extend(primary[:maximum])
+
+    # Take top min_per_source from each if available
+    take_reddit = min(min_per_source, len(reddit), maximum)
+    take_github = min(min_per_source, len(github), maximum - take_reddit)
+    selected.extend(reddit[:take_reddit])
+    selected.extend(github[:take_github])
+
+    # Fill remaining slots from either primary type, alternating by score
+    remaining_primary = [e for e in sorted_entries if e in primary and e not in selected]
+    for e in remaining_primary:
+        if len(selected) >= maximum:
+            break
+        selected.append(e)
 
     # Fill remaining slots with secondary, respecting the quota
     remaining_slots = maximum - len(selected)
     if remaining_slots > 0 and secondary:
         # How many secondary can we take while keeping primary fraction >= quota?
-        # primary_count / (primary_count + secondary_count) >= quota
-        # secondary_count <= primary_count * (1 - quota) / quota
         max_secondary = int(len(selected) * (1 - quota) / quota) if quota > 0 else remaining_slots
         take_secondary = min(remaining_slots, max_secondary, len(secondary))
         selected.extend(secondary[:take_secondary])
