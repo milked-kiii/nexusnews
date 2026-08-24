@@ -27,8 +27,16 @@ uses official APIs where credentials are required; it does not scrape logged-in 
 
 - **Medium**: use a supported RSS feed such as `https://medium.com/feed/@username`,
   `https://medium.com/feed/publication`, or `https://medium.com/feed/tag/topic`.
-- **Reddit**: point `url` at a listing JSON endpoint, for example
-  `https://www.reddit.com/r/MachineLearning/new.json?limit=20`.
+- **Reddit**: prefer the public RSS hot feed for timeliness, for example
+  `https://www.reddit.com/r/MachineLearning/hot/.rss` (plain `rss` kind;
+  `/new/.rss` and `/top/.rss?t=day` also work). The `reddit` kind with listing
+  JSON endpoints (e.g. `/hot.json`) is still supported, but reddit.com rejects
+  unauthenticated JSON requests from many networks with 403/429; stickied
+  megathreads are skipped in JSON mode.
+- **GitHub**: set `kind` to `github` for a hot-new-repos list — repositories
+  created in the last 7 days, sorted by stars, via the official search API
+  (no token needed; set `token_env` such as `GITHUB_TOKEN` only to raise rate
+  limits). Add `query` to narrow by topic, e.g. `"query": "llm agent"`.
 - **X**: set `kind` to `x`, provide a recent-search `query`, and export the bearer
   token named by `token_env` (for example `X_BEARER_TOKEN`).
 - **Discord**: create a bot, add it to the server, grant it `VIEW_CHANNEL` and
@@ -83,8 +91,11 @@ RSS. This mode needs network access:
 python3 -m nexusnews --config config.json --dry-run
 ```
 
-The command stores normalized items in `var/nexusnews.db`, selects 5–10 unique
-items from the last 24 hours, and writes `var/latest-digest.txt`. A run fails rather
+The command stores normalized items in `var/nexusnews.db`, selects unique items
+from the recency window, and writes `var/latest-digest.txt`. The window defaults
+to 96 hours (suited to weekly blog sources); set `window_hours` in the config to
+tighten it — 48 or less is recommended once hot-list sources (GitHub, Reddit
+hot) are configured, so the digest stops surfacing days-old stories. A run fails rather
 than padding the digest with duplicates if all sources fail; if fewer than the
 configured minimum unique stories pass selection, it emits an explicit empty-day
 message.

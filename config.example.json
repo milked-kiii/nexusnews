@@ -4,7 +4,8 @@
     {"name": "Google AI", "url": "https://blog.google/technology/ai/rss/"},
     {"name": "MIT Technology Review AI", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed"},
     {"name": "Medium AI", "kind": "medium", "url": "https://medium.com/feed/tag/artificial-intelligence"},
-    {"name": "Reddit MachineLearning", "kind": "reddit", "url": "https://www.reddit.com/r/MachineLearning/new.json?limit=20", "limit": 20},
+    {"name": "GitHub 热榜", "kind": "github", "limit": 15},
+    {"name": "Reddit MachineLearning", "url": "https://www.reddit.com/r/MachineLearning/hot/.rss", "limit": 20},
     {"name": "X AI", "kind": "x", "query": "(AI OR LLM) lang:en -is:retweet", "token_env": "X_BEARER_TOKEN", "limit": 20},
     {"name": "Discord AI Channel", "kind": "discord", "channel_id": "YOUR_CHANNEL_ID", "token_env": "DISCORD_BOT_TOKEN", "limit": 20}
   ],
@@ -12,6 +13,7 @@
   "output": "var/latest-digest.txt",
   "minimum": 5,
   "maximum": 10,
+  "window_hours": 48,
   "webhook_env": "FEISHU_WEBHOOK_URL",
   "llm_endpoint": "https://YOUR-OPENAI-COMPATIBLE-ENDPOINT/v1/chat/completions",
   "llm_model": "YOUR_MODEL",

@@ -1,5 +1,12 @@
 {
   "sources": [
+    {"name": "Reddit LocalLLaMA", "kind": "reddit", "subreddit": "LocalLLaMA", "sort": "hot", "min_score": 20, "limit": 20},
+    {"name": "Reddit MachineLearning", "kind": "reddit", "subreddit": "MachineLearning", "sort": "hot", "min_score": 50, "limit": 20},
+    {"name": "Reddit programming", "kind": "reddit", "subreddit": "programming", "sort": "hot", "min_score": 100, "limit": 20},
+    {"name": "Reddit ClaudeAI", "kind": "reddit", "subreddit": "ClaudeAI", "sort": "hot", "min_score": 10, "limit": 20},
+    {"name": "Reddit OpenAI", "kind": "reddit", "subreddit": "OpenAI", "sort": "hot", "min_score": 50, "limit": 20},
+    {"name": "Reddit artificial", "kind": "reddit", "subreddit": "artificial", "sort": "hot", "min_score": 100, "limit": 20},
+    {"name": "GitHub Agent Search", "kind": "github_search", "query": "agent OR coding OR copilot OR MCP OR tool-use", "limit": 15},
     {"name": "Trae", "url": "https://www.trae.ai/rss.xml"},
     {"name": "Qoder", "url": "https://qoder.com/blog", "kind": "webpage",
      "link_pattern": "^/blog/[a-z0-9][\\w.-]*$",
@@ -26,6 +33,8 @@
   "output": "var/latest-digest.txt",
   "minimum": 3,
   "maximum": 5,
+  "window_hours": 24,
+  "primary_source_quota": 0.5,
   "delivery_mode": "card_dm",
   "doc_sync": true,
   "feishu_open_id": "ou_1a9693a8c9b1046e97a143bf402280f0",
@@ -53,4 +62,3 @@
     "Khosla", "Index Ventures"
   ]
 }
-

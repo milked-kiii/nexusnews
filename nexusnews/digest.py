@@ -219,7 +219,10 @@ def local_summarize(item: Item, *, vc_watchlist: tuple[str, ...] = ()) -> Digest
         category = "funding"
     # Watchlist hits get a small relevance bump so they survive filtering even
     # when the LLM/local fallback would otherwise rank them low.
-    base_score = 6
+    # NOTE: base_score is 5 (below the 6-point filter threshold) so that
+    # LLM failures don't accidentally push low-quality items into the digest.
+    # Only VC hits (which get 7) can survive filtering without LLM scoring.
+    base_score = 5
     if vc_hit:
         base_score = 7
     return DigestEntry(item.title, item.source, item.url or f"https://{host}" if host else "（无链接）",
@@ -230,10 +233,11 @@ def local_summarize(item: Item, *, vc_watchlist: tuple[str, ...] = ()) -> Digest
 # ── text rendering (backward compat) ────────────────────────────
 
 def render_digest(entries: list[DigestEntry], *, generated_at: datetime | None = None, digest_id: str | None = None,
-                  failed_sources: int = 0) -> str:
+                  failed_sources: int = 0, window_hours: int = 48) -> str:
     generated_at = generated_at or datetime.now(timezone.utc)
     digest_id = digest_id or generated_at.strftime("%Y-%m-%d")
-    lines = [f"🤖 AI 日报｜{generated_at:%Y-%m-%d}（共 {len(entries)} 条）", "过去 48 小时的低噪音精选。", ""]
+    lines = [f"🤖 AI 日报｜{generated_at:%Y-%m-%d}（共 {len(entries)} 条）",
+             f"过去 {window_hours} 小时的低噪音精选。", ""]
     for number, entry in enumerate(entries, 1):
         summary_line = entry.summary if entry.summary.startswith(">") else f"> 摘要：{entry.summary}"
         lines.extend([f"{number}. {entry.title}", f"来源：{entry.source}", f"原文：[阅读原文]({entry.url})",
@@ -277,80 +281,123 @@ def _format_published(published_at: str | None, *, now: datetime | None = None) 
     return f"{local.year}年{local.month}月{local.day}日"
 
 
+def _source_display_tier(source_name: str) -> int:
+    """Display tier for grouping in card: 0=Reddit, 1=GitHub, 2=domestic."""
+    s = source_name.lower()
+    if s.startswith("reddit"):
+        return 0
+    if s.startswith("github"):
+        return 1
+    return 2
+
+
 def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = None,
-                failed_sources: int = 0, doc_url: str | None = None) -> str:
+                failed_sources: int = 0, doc_url: str | None = None, window_hours: int = 48) -> str:
     """Render a Feishu interactive card JSON string with category grouping.
 
     If ``doc_url`` is given, a "查看文档" primary button is appended so the
     reader can open the synced Feishu cloud document.
+
+    Entries are displayed grouped by source tier (Reddit -> GitHub -> domestic),
+    then by category within each tier, then by score within each category.
     """
     generated_at = generated_at or datetime.now(timezone.utc)
     zh_date = f"{generated_at.month}月{generated_at.day}日"
 
-    # Group by category, preserving category order
-    grouped: dict[str, list[DigestEntry]] = {}
-    for entry in entries:
-        grouped.setdefault(entry.category, []).append(entry)
+    # Sort entries: source tier first (Reddit -> GitHub -> domestic), then
+    # category order, then score desc within each group
+    def display_key(e: DigestEntry) -> tuple[int, int, int]:
+        tier = _source_display_tier(e.source)
+        try:
+            cat_idx = CATEGORY_ORDER.index(e.category)
+        except ValueError:
+            cat_idx = len(CATEGORY_ORDER)
+        return (tier, cat_idx, -e.relevance_score)
+
+    sorted_entries = sorted(entries, key=display_key)
+
+    # Group by source tier for display, then by category within each tier
+    tier_names = {0: "Reddit 热议", 1: "GitHub 新兴项目", 2: "国内动态"}
+    tier_groups: dict[int, dict[str, list[DigestEntry]]] = {}
+    for entry in sorted_entries:
+        tier = _source_display_tier(entry.source)
+        if tier not in tier_groups:
+            tier_groups[tier] = {}
+        tier_groups[tier].setdefault(entry.category, []).append(entry)
 
     elements: list[dict] = []
-    displayed_categories = [c for c in CATEGORY_ORDER if c in grouped]
 
-    for cat in displayed_categories:
-        items = grouped[cat]
-        # Category header
-        elements.append({
-            "tag": "div",
-            "text": {"tag": "lark_md", "content": f"**{CATEGORIES[cat]}**  ({len(items)}条)"},
-        })
-
-        for local_idx, entry in enumerate(items, 1):
-            safe_title = _escape_md(entry.title)[:80]
-            safe_summary = _escape_md(entry.summary)[:200]
-            safe_why = _escape_md(entry.why_important)[:150]
-            safe_source = _escape_md(entry.source)
-            safe_published = _escape_md(_format_published(entry.published_at))
-
-            # Three-tier visual priority: 🔥 yellow for 9-10, ⚡ blue for 7-8,
-            # default bold for the rest. Both emoji and color carry the signal.
-            if entry.relevance_score >= 9:
-                badge = "🔥"
-                title_html = f"<font color='yellow'>{badge} {local_idx}. {safe_title}</font>"
-            elif entry.relevance_score >= 7:
-                badge = "⚡"
-                title_html = f"<font color='blue'>{badge} {local_idx}. {safe_title}</font>"
-            else:
-                badge = "📌"
-                title_html = f"**{badge} {local_idx}. {safe_title}**"
-            # Render summary as a quote line unless it already starts with one
-            summary_line = safe_summary if safe_summary.startswith(">") else f"> {safe_summary}"
-
-            md = (
-                f"{title_html}\n"
-                f"<font color='grey'>{safe_source} · {safe_published}</font>\n\n"
-                f"{summary_line}\n\n"
-                f"💡 {safe_why}"
-            )
-
-            element: dict = {
+    for tier in sorted(tier_groups.keys()):
+        grouped = tier_groups[tier]
+        # Tier header (only if multiple tiers present)
+        if len(tier_groups) > 1:
+            elements.append({
                 "tag": "div",
-                "text": {"tag": "lark_md", "content": md},
-            }
-            if entry.url and entry.url not in ("（无链接）", ""):
-                element["extra"] = {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "🔗 阅读原文"},
-                    "url": entry.url,
-                    "type": "default",
-                }
-            elements.append(element)
+                "text": {"tag": "lark_md", "content": f"**—— {tier_names.get(tier, '其他')} ——**"},
+            })
             elements.append({"tag": "hr"})
 
-        # Remove trailing hr for last category (will be re-added if more categories follow)
-        if elements and elements[-1].get("tag") == "hr":
-            elements.pop()
+        displayed_categories = [c for c in CATEGORY_ORDER if c in grouped]
+        for cat in displayed_categories:
+            items = grouped[cat]
+            # Category header
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": f"**{CATEGORIES[cat]}**  ({len(items)}条)"},
+            })
+
+            for local_idx, entry in enumerate(items, 1):
+                safe_title = _escape_md(entry.title)[:80]
+                safe_summary = _escape_md(entry.summary)[:200]
+                safe_why = _escape_md(entry.why_important)[:150]
+                safe_source = _escape_md(entry.source)
+                safe_published = _escape_md(_format_published(entry.published_at))
+
+                # Three-tier visual priority: 🔥 yellow for 9-10, ⚡ blue for 7-8,
+                # default bold for the rest. Both emoji and color carry the signal.
+                if entry.relevance_score >= 9:
+                    badge = "🔥"
+                    title_html = f"<font color='yellow'>{badge} {local_idx}. {safe_title}</font>"
+                elif entry.relevance_score >= 7:
+                    badge = "⚡"
+                    title_html = f"<font color='blue'>{badge} {local_idx}. {safe_title}</font>"
+                else:
+                    badge = "📌"
+                    title_html = f"**{badge} {local_idx}. {safe_title}**"
+                # Render summary as a quote line unless it already starts with one
+                summary_line = safe_summary if safe_summary.startswith(">") else f"> {safe_summary}"
+
+                md = (
+                    f"{title_html}\n"
+                    f"<font color='grey'>{safe_source} · {safe_published}</font>\n\n"
+                    f"{summary_line}\n\n"
+                    f"💡 {safe_why}"
+                )
+
+                element: dict = {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": md},
+                }
+                if entry.url and entry.url not in ("（无链接）", ""):
+                    element["extra"] = {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "🔗 阅读原文"},
+                        "url": entry.url,
+                        "type": "default",
+                    }
+                elements.append(element)
+                elements.append({"tag": "hr"})
+
+            # Remove trailing hr for last category in this tier
+            if elements and elements[-1].get("tag") == "hr":
+                elements.pop()
+
+        # Add spacing between tiers
+        if tier != max(tier_groups.keys()):
+            elements.append({"tag": "hr"})
 
     # Footer
-    footer_lines = ["过去 48 小时的低噪音精选"]
+    footer_lines = [f"过去 {window_hours} 小时的低噪音精选"]
     if failed_sources:
         footer_lines.append(f"今日有 {failed_sources} 个信源暂时不可用")
     elements.append({

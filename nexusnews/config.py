@@ -18,6 +18,10 @@ class Source:
     link_pattern: str | None = None
     title_group: str | None = None
     exclude_pattern: str | None = None
+    # reddit kind options
+    subreddit: str | None = None
+    sort: str = "hot"
+    min_score: int = 0
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,12 @@ class Config:
     llm_model: str | None = None
     llm_api_key_env: str = "NEXUSNEWS_LLM_API_KEY"
     vc_watchlist: tuple[str, ...] = ()
+    # Recency window for digest candidates. Slow blog/changelog sources need a
+    # wide window; hot-list sources (GitHub, Reddit) stay fresh either way.
+    window_hours: int = 96
+    # Minimum fraction of final digest slots that must come from primary sources
+    # (Reddit / GitHub). 0.5 means at least half the digest is Reddit/GitHub.
+    primary_source_quota: float = 0.5
 
 
 def load_config(path: str | Path) -> Config:
@@ -53,14 +63,17 @@ def load_config(path: str | Path) -> Config:
         raise ValueError(f"invalid config {path}: {exc}") from exc
     if not sources:
         raise ValueError("config must contain at least one source")
-    supported_kinds = {"rss", "medium", "reddit", "x", "discord", "webpage"}
+    supported_kinds = {"rss", "medium", "reddit", "github", "github_trending", "github_search", "x", "discord", "webpage"}
     for source in sources:
         if source.kind not in supported_kinds:
             raise ValueError(f"unsupported source kind: {source.kind}")
         if not 1 <= source.limit <= 100:
             raise ValueError(f"source {source.name!r} limit must be between 1 and 100")
-        if source.kind in {"rss", "medium", "reddit"} and not source.url:
+        if source.kind in {"rss", "medium"} and not source.url:
             raise ValueError(f"source {source.name!r} requires url")
+        if source.kind == "reddit":
+            if not source.subreddit and not source.url:
+                raise ValueError(f"reddit source {source.name!r} requires subreddit or url")
         if source.kind == "webpage":
             if not source.url:
                 raise ValueError(f"webpage source {source.name!r} requires url")
@@ -72,6 +85,8 @@ def load_config(path: str | Path) -> Config:
             raise ValueError(f"Discord source {source.name!r} requires channel_id and token_env")
     if not 1 <= config.minimum <= config.maximum <= 10:
         raise ValueError("config selection must satisfy 1 <= minimum <= maximum <= 10")
+    if not 1 <= config.window_hours <= 24 * 14:
+        raise ValueError("window_hours must be between 1 and 336 (14 days)")
     if config.delivery_mode not in ("webhook", "dm", "chat", "card_dm", "card_chat"):
         raise ValueError("delivery_mode must be one of: webhook, dm, chat, card_dm, card_chat")
     if config.delivery_mode in ("dm", "card_dm") and not config.feishu_open_id:

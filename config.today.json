@@ -1,60 +1,6 @@
 {
   "sources": [
     {
-      "name": "Reddit LocalLLaMA",
-      "kind": "reddit",
-      "subreddit": "LocalLLaMA",
-      "sort": "hot",
-      "min_score": 20,
-      "limit": 20
-    },
-    {
-      "name": "Reddit MachineLearning",
-      "kind": "reddit",
-      "subreddit": "MachineLearning",
-      "sort": "hot",
-      "min_score": 50,
-      "limit": 20
-    },
-    {
-      "name": "Reddit programming",
-      "kind": "reddit",
-      "subreddit": "programming",
-      "sort": "hot",
-      "min_score": 100,
-      "limit": 20
-    },
-    {
-      "name": "Reddit ClaudeAI",
-      "kind": "reddit",
-      "subreddit": "ClaudeAI",
-      "sort": "hot",
-      "min_score": 10,
-      "limit": 20
-    },
-    {
-      "name": "Reddit OpenAI",
-      "kind": "reddit",
-      "subreddit": "OpenAI",
-      "sort": "hot",
-      "min_score": 50,
-      "limit": 20
-    },
-    {
-      "name": "Reddit artificial",
-      "kind": "reddit",
-      "subreddit": "artificial",
-      "sort": "hot",
-      "min_score": 100,
-      "limit": 20
-    },
-    {
-      "name": "GitHub Agent Search",
-      "kind": "github_search",
-      "query": "agent OR coding OR copilot OR MCP OR tool-use",
-      "limit": 15
-    },
-    {
       "name": "Trae",
       "url": "https://www.trae.ai/rss.xml"
     },
@@ -123,16 +69,36 @@
       "name": "36氪AI融资",
       "url": "https://rsshub.rssforever.com/36kr/search/articles/AI%E8%9E%8D%E8%B5%84",
       "limit": 15
+    },
+    {
+      "name": "GitHub 热榜",
+      "kind": "github",
+      "limit": 15
+    },
+    {
+      "name": "Reddit MachineLearning",
+      "url": "https://www.reddit.com/r/MachineLearning/hot/.rss",
+      "limit": 15
+    },
+    {
+      "name": "Reddit LocalLLaMA",
+      "url": "https://www.reddit.com/r/LocalLLaMA/hot/.rss",
+      "limit": 15
+    },
+    {
+      "name": "Reddit Artificial",
+      "url": "https://www.reddit.com/r/artificial/hot/.rss",
+      "limit": 15
     }
   ],
-  "database": "var/nexusnews-group.db",
-  "output": "var/latest-group-digest.txt",
+  "database": "var/nexusnews.db",
+  "output": "var/latest-digest.txt",
   "minimum": 3,
   "maximum": 5,
-  "window_hours": 24,
-  "primary_source_quota": 0.5,
-  "delivery_mode": "card_chat",
+  "window_hours": 15,
+  "delivery_mode": "card_dm",
   "doc_sync": false,
+  "feishu_open_id": "ou_1a9693a8c9b1046e97a143bf402280f0",
   "llm_endpoint": "https://api.deepseek.com/v1/chat/completions",
   "llm_model": "deepseek-chat",
   "llm_api_key_env": "NEXUSNEWS_LLM_API_KEY",
@@ -175,6 +141,5 @@
     "Greylock",
     "Khosla",
     "Index Ventures"
-  ],
-  "feishu_chat_id": "oc_0d266fec792fe5569d72ab3799a96b61"
+  ]
 }
