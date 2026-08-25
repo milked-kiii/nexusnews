@@ -36,6 +36,7 @@ class Config:
     feishu_app_secret_env: str = "FEISHU_APP_SECRET"
     feishu_open_id: str | None = None
     feishu_chat_id: str | None = None
+    feishu_chat_ids: tuple[str, ...] | None = None
     feishu_open_id_env: str = "NEXUSNEWS_FEISHU_OPEN_ID"
     delivery_mode: str = "webhook"
     doc_sync: bool = False
@@ -58,6 +59,8 @@ def load_config(path: str | Path) -> Config:
         top_level = {k: v for k, v in data.items() if k != "sources"}
         if "vc_watchlist" in top_level:
             top_level["vc_watchlist"] = tuple(top_level["vc_watchlist"])
+        if "feishu_chat_ids" in top_level:
+            top_level["feishu_chat_ids"] = tuple(top_level["feishu_chat_ids"])
         config = Config(sources=sources, **top_level)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid config {path}: {exc}") from exc
@@ -91,8 +94,9 @@ def load_config(path: str | Path) -> Config:
         raise ValueError("delivery_mode must be one of: webhook, dm, chat, card_dm, card_chat")
     if config.delivery_mode in ("dm", "card_dm") and not config.feishu_open_id:
         raise ValueError("feishu_open_id is required for DM delivery modes")
-    if config.delivery_mode in ("chat", "card_chat") and not config.feishu_chat_id:
-        raise ValueError("feishu_chat_id is required for chat delivery modes")
+    if config.delivery_mode in ("chat", "card_chat"):
+        if not config.feishu_chat_id and not config.feishu_chat_ids:
+            raise ValueError("feishu_chat_id or feishu_chat_ids is required for chat delivery modes")
     if bool(config.llm_endpoint) != bool(config.llm_model):
         raise ValueError("llm_endpoint and llm_model must be configured together")
     if config.doc_sync and not config.feishu_open_id:

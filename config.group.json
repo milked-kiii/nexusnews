@@ -176,5 +176,7 @@
     "Khosla",
     "Index Ventures"
   ],
-  "feishu_chat_id": "oc_0d266fec792fe5569d72ab3799a96b61"
+  "feishu_chat_ids": [
+    "oc_0d266fec792fe5569d72ab3799a96b61"
+  ]
 }

@@ -123,6 +123,23 @@ def send_feishu_card(card_json: str, receive_id: str, receive_id_type: str,
     raise DeliveryError(f"Feishu card delivery failed after {attempts} attempts: {last}") from last
 
 
+def send_feishu_card_to_chats(card_json: str, chat_ids: list[str] | tuple[str, ...],
+                              *, app_id_env: str = "FEISHU_APP_ID",
+                              app_secret_env: str = "FEISHU_APP_SECRET",
+                              timeout: float = 10) -> None:
+    """Send a Feishu interactive card to multiple chats. Raises if any chat fails."""
+    errors = []
+    for chat_id in chat_ids:
+        try:
+            send_feishu_card(card_json, chat_id, "chat_id",
+                             app_id_env=app_id_env, app_secret_env=app_secret_env,
+                             attempts=1, timeout=timeout)
+        except DeliveryError as exc:
+            errors.append(f"{chat_id}: {exc}")
+    if errors:
+        raise DeliveryError(f"Feishu card delivery failed for {len(errors)}/{len(chat_ids)} chats: {'; '.join(errors)}")
+
+
 def send_feishu(webhook: str, text: str, *, attempts: int = 3, timeout: float = 10, delay: float = 1) -> None:
     payload = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode()
     last: Exception | None = None

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Config
-from .delivery import send_feishu, send_feishu_card, send_feishu_chat, send_feishu_dm
+from .delivery import send_feishu, send_feishu_card, send_feishu_card_to_chats, send_feishu_chat, send_feishu_dm
 from .digest import (DigestEntry, cutoff, filter_entries, local_summarize, render_card, render_digest,
                      render_empty_digest, select_items)
 from .feishu_doc import sync_digest_to_doc, sync_entries_to_doc
@@ -173,12 +173,18 @@ def _deliver_text(config: Config, text: str) -> None:
 
 def _deliver_card(config: Config, card_json: str) -> None:
     if config.delivery_mode == "card_chat":
-        chat_id = config.feishu_chat_id
-        if not chat_id:
-            raise RuntimeError("card_chat delivery requires feishu_chat_id in config")
-        send_feishu_card(card_json, chat_id, "chat_id",
-                         app_id_env=config.feishu_app_id_env,
-                         app_secret_env=config.feishu_app_secret_env)
+        # Resolve chat IDs: prefer feishu_chat_ids, fall back to single feishu_chat_id
+        if config.feishu_chat_ids:
+            chat_ids = [c for c in config.feishu_chat_ids if c]
+        elif config.feishu_chat_id:
+            chat_ids = [config.feishu_chat_id]
+        else:
+            raise RuntimeError("card_chat delivery requires feishu_chat_ids or feishu_chat_id in config")
+        if not chat_ids:
+            raise RuntimeError("card_chat delivery requires at least one non-empty chat_id")
+        send_feishu_card_to_chats(card_json, chat_ids,
+                                  app_id_env=config.feishu_app_id_env,
+                                  app_secret_env=config.feishu_app_secret_env)
     elif config.delivery_mode == "card_dm":
         open_id = config.feishu_open_id or os.environ.get(config.feishu_open_id_env, "")
         if not open_id:
