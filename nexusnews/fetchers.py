@@ -505,14 +505,14 @@ class PlatformFetcher:
             ).decode("utf-8", errors="ignore")
             return list(parse_github_trending(html, source=source.name))
         if kind == "github_search":
-            # GitHub Search API: find EMERGING repos — recently created (last 30 days)
-            # AND actively pushed (last 24h) with meaningful star traction.
-            # This filters out established projects like Dify/Codex that push daily.
-            created_since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+            # GitHub Search API: find EMERGING repos — recently pushed (last 24h)
+            # AND meaningful star traction. Created date is relaxed to avoid missing
+            # fast-growing older projects (e.g., QwenAudio created 2026-07-01 but +200 stars in 7 days).
             pushed_since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d")
-            base_query = source.query or "agent OR coding OR copilot OR MCP"
+            created_since_flexible = "2026-01-01"  # Only filter out truly ancient repos
+            base_query = source.query or "agent OR coding OR copilot OR MCP OR tool-use"
             params = urlencode({
-                "q": f"{base_query} created:>{created_since} pushed:>{pushed_since} stars:>20",
+                "q": f"{base_query} pushed:>{pushed_since} stars:>20 created:>{created_since_flexible}",
                 "sort": "stars",
                 "order": "desc",
                 "per_page": source.limit,
