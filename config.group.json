@@ -131,6 +131,7 @@
   "maximum": 5,
   "window_hours": 24,
   "primary_source_quota": 0.5,
+  "memory_seed": "var/repo-memory-seed.json",
   "delivery_mode": "card_chat",
   "doc_sync": false,
   "llm_endpoint": "https://api.deepseek.com/v1/chat/completions",
@@ -177,7 +178,7 @@
     "Index Ventures"
   ],
   "feishu_chat_ids": [
-    "oc_0d266fec792fe5569d72ab3799a96b61",
-    "oc_ba81831a6eabfced5d82542b9fbdcf4d"
-  ]
+    "oc_0d266fec792fe5569d72ab3799a96b61"
+  ],
+  "memory_db": "var/repo-memory-group.db"
 }

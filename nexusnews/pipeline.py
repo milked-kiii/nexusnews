@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Callable
 
 from .config import Config
@@ -12,7 +13,8 @@ from .digest import (DigestEntry, cutoff, filter_entries, local_summarize, rende
                      render_empty_digest, select_items)
 from .feishu_doc import sync_digest_to_doc, sync_entries_to_doc
 from .fetchers import PlatformFetcher, Transport
-from .models import Item, normalize_item
+from .memory import RepoMemory, load_seed_file
+from .models import Item, RawItem, normalize_item
 from .llm import OpenAICompatibleSummarizer, with_fallback
 from .storage import SQLiteItemStore
 
@@ -194,6 +196,29 @@ def _deliver_card(config: Config, card_json: str) -> None:
                          app_secret_env=config.feishu_app_secret_env)
 
 
+# ── repo memory helpers ──────────────────────────────────────────
+# GitHub repos get cross-run state (first_seen / pushed / star history) from
+# RepoMemory. Items carry the repo key in the content prefix added by
+# parse_github_search: "repo:owner/name created:... stars:...".
+
+_REPO_PREFIX = re.compile(r"^repo:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)")
+
+
+def _repo_key(item: Item) -> str | None:
+    """Extract owner/repo from a GitHub item's content prefix, if any."""
+    if not item.content or not item.source.lower().startswith("github"):
+        return None
+    m = _REPO_PREFIX.match(item.content)
+    return m.group(1).lower() if m else None
+
+
+def _repo_stars_of(item: Item) -> int | None:
+    if not item.content:
+        return None
+    m = re.match(r"repo:\S+\s+created:\S+\s+stars:(\d+)", item.content)
+    return int(m.group(1)) if m else None
+
+
 def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | None = None, summarizer: Summarizer | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     database = Path(config.database)
@@ -215,6 +240,42 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
         # tighten to 48h or less when hot-list sources like GitHub/Reddit
         # hot are configured and freshness matters more).
         recent = store.recent(since=cutoff(hours=config.window_hours, now=now))
+
+    # ── GitHub repo memory (cross-run, persisted via actions/cache) ──
+    # Sequence matters: observe first (fixes first_seen for every repo seen
+    # today, pushed or not), then drop repos that were already pushed
+    # (one push per repo, ever) or that stopped being "emerging" (first
+    # seen more than 14 days ago). Star deltas are computed BEFORE the
+    # pushed-filter so a re-pushed repo could still show growth (it won't:
+    # pushed repos are dropped) — the delta is injected into LLM context.
+    memory_path = Path(config.memory_db)
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    with RepoMemory(memory_path) as memory:
+        # Bootstrap from the seed file (idempotent; no-op once live data exists)
+        if config.memory_seed:
+            seed = load_seed_file(config.memory_seed)
+            if seed:
+                memory.load_seed(seed, now=now)
+
+        star_deltas: dict[str, int | None] = {}
+        repos_observed: list[str] = []
+        github_items: list[Item] = []
+        for item in recent:
+            key = _repo_key(item)
+            if not key:
+                continue
+            memory.ensure_repo(key, stars=_repo_stars_of(item), now=now)
+            repos_observed.append(key)
+            star_deltas[key] = memory.stars_delta(key, now=now)
+            github_items.append(item)
+
+        pushed_or_old = {k for k in repos_observed
+                         if memory.is_pushed(k) or not memory.is_emerging(k, now=now)}
+        if pushed_or_old:
+            dropped = [item for item in github_items if _repo_key(item) in pushed_or_old]
+            logging.info("repo memory dropped already-pushed/stale repos",
+                         extra={"repos": sorted(pushed_or_old), "dropped_items": len(dropped)})
+        recent = [item for item in recent if _repo_key(item) not in pushed_or_old]
 
     # Hard keyword filter: drop non-Agent items before LLM scoring
     agent_relevant = [item for item in recent if _is_agent_relevant(item)]
@@ -238,8 +299,24 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
         else:
             summarizer = lambda item: local_summarize(item, vc_watchlist=config.vc_watchlist)  # noqa: E731
 
-    # Summarize all candidates to get relevance scores
-    all_entries = [summarizer(item) for item in candidates]
+    # Summarize all candidates to get relevance scores. For GitHub repos we
+    # wrap the configured summarizer to inject the star-growth signal (from
+    # repo memory) into the item content the LLM sees — the LLM stays
+    # item-independent (Q4 decision: no push-history injection), it just
+    # gets richer facts about the repo itself.
+    def _with_growth(item: Item) -> DigestEntry:
+        key = _repo_key(item)
+        if key and item.content:
+            delta = star_deltas.get(key)
+            if delta is not None:
+                growth_note = f"近7天新增⭐{delta}" if delta >= 0 else f"近7天⭐{delta}"
+                enriched = Item(item.id, item.source, item.title, item.url,
+                                f"{item.content} · {growth_note}",
+                                item.published_at, item.dedupe_key)
+                return summarizer(enriched)
+        return summarizer(item)
+
+    all_entries = [_with_growth(item) for item in candidates]
 
     # Filter by business relevance (≥6) and re-rank by score
     # NOTE: don't truncate to maximum yet — _apply_primary_quota needs the full
@@ -287,4 +364,11 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
             _deliver_text(config, text)
         with SQLiteItemStore(database) as store:
             store.mark_delivered(item.id for item in selected)
+        # Record pushed repos in the cross-run memory (one push per repo).
+        # Runs even on empty digests so observation-only days still persist.
+        pushed_repos = [k for k in (_repo_key(item) for item in selected) if k]
+        with RepoMemory(memory_path) as memory:
+            if pushed_repos:
+                memory.mark_pushed(pushed_repos, now=now)
+            memory.prune_snapshots(now=now)
     return text

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import unescape
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -398,12 +399,13 @@ def parse_github_search(data: object, *, source: str) -> Sequence[RawItem]:
             continue
         description = _string(repo.get("description"))
         # Pack repo metadata into content prefix for card display:
-        # "created:YYYY-MM-DD stars:N ⭐ · language · topics · description"
+        # "repo:owner/name created:YYYY-MM-DD stars:N ⭐ · language · topics · description"
+        # The repo: key is the cross-run identity used by RepoMemory.
         created_at = _string(repo.get("created_at"))
         created_date = created_at[:10] if created_at else "未知"
         star_count = repo.get("stargazers_count")
         star_str = str(star_count) if isinstance(star_count, int) else "0"
-        meta = [f"created:{created_date} stars:{star_str} ⭐"]
+        meta = [f"repo:{full_name} created:{created_date} stars:{star_str} ⭐"]
         language = _string(repo.get("language"))
         if language:
             meta.append(language)
@@ -505,32 +507,61 @@ class PlatformFetcher:
             ).decode("utf-8", errors="ignore")
             return list(parse_github_trending(html, source=source.name))
         if kind == "github_search":
-            # GitHub Search API: find EMERGING repos — recently pushed (last 24h)
-            # AND meaningful star traction. Created date is relaxed to avoid missing
-            # fast-growing older projects (e.g., QwenAudio created 2026-07-01 but +200 stars in 7 days).
-            pushed_since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d")
-            created_since_flexible = "2026-01-01"  # Only filter out truly ancient repos
+            # GitHub Search API, TWO radar queries (2026-09-07 redesign):
+            #
+            #   A. "newborn"  — created within 14 days, any star traction.
+            #      Fresh repo + meaningful traction = genuinely new project.
+            #   B. "surge"    — created within 90 days AND star band 200..20k.
+            #      The upper band edge EXCLUDES the 40k-95k star incumbents
+            #      (orca/paperclip/multica/open-design...) that dominated the
+            #      old single query. Growth signal for these comes from
+            #      RepoMemory star deltas, not star totals.
+            #
+            # Why a star BAND instead of stars:>N: the old query
+            # (created:>2026-01-01 + stars:>50) sorted by total stars, so the
+            # same handful of big incumbents (pushed daily → always in the
+            # pushed:>24h window) filled every slot, every day. Sorting by
+            # "recently created" first also breaks the star-count oligopoly.
+            now = datetime.now(timezone.utc)
             base_query = source.query or "agent OR coding OR copilot OR MCP OR tool-use"
-            params = urlencode({
-                "q": f"{base_query} pushed:>{pushed_since} stars:>20 created:>{created_since_flexible}",
-                "sort": "stars",
-                "order": "desc",
-                "per_page": source.limit,
-            })
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "Nexusnews/1.0 (read-only news digest)",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-            github_token = os.environ.get(source.token_env or "")
-            if github_token:
-                headers["Authorization"] = f"Bearer {github_token}"
-            return APIFetcher(
-                self.transport,
-                lambda data: parse_github_search(data, source=source.name),
-                timeout=self.timeout,
-                headers=headers,
-            ).fetch(f"https://api.github.com/search/repositories?{params}")
+            radars = [
+                # (label, extra qualifiers)
+                ("newborn", f"created:>{(now - timedelta(days=14)).strftime('%Y-%m-%d')} stars:>50"),
+                ("surge",   f"created:>{(now - timedelta(days=90)).strftime('%Y-%m-%d')} stars:200..20000"),
+            ]
+            items: list[RawItem] = []
+            seen: set[str] = set()
+            for label, qualifier in radars:
+                params = urlencode({
+                    "q": f"{base_query} pushed:>{(now - timedelta(hours=24)).strftime('%Y-%m-%d')} {qualifier}",
+                    "sort": "stars",
+                    "order": "desc",
+                    "per_page": max(5, source.limit // 2),
+                })
+                headers = {
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "Nexusnews/1.0 (read-only news digest)",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                }
+                github_token = os.environ.get(source.token_env or "")
+                if github_token:
+                    headers["Authorization"] = f"Bearer {github_token}"
+                radar_items = APIFetcher(
+                    self.transport,
+                    lambda data: parse_github_search(data, source=source.name),
+                    timeout=self.timeout,
+                    headers=headers,
+                ).fetch(f"https://api.github.com/search/repositories?{params}")
+                for raw in radar_items:
+                    full_name = (raw.title.split(":", 1)[0] if ":" in raw.title else raw.title).lower()
+                    if full_name in seen:
+                        continue
+                    seen.add(full_name)
+                    items.append(raw)
+                if not radar_items:
+                    logging.warning("github_search radar returned nothing",
+                                    extra={"radar": label, "source": source.name})
+            return items
         if kind == "github":
             # Legacy GitHub search (kept for backward compat); hot-new-repos proxy:
             # repos created in the last 7 days, sorted by stars.

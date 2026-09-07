@@ -35,6 +35,7 @@
   "maximum": 5,
   "window_hours": 24,
   "primary_source_quota": 0.5,
+  "memory_seed": "var/repo-memory-seed.json",
   "delivery_mode": "card_dm",
   "doc_sync": true,
   "feishu_open_id": "ou_1a9693a8c9b1046e97a143bf402280f0",

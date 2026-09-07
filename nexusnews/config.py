@@ -50,6 +50,12 @@ class Config:
     # Minimum fraction of final digest slots that must come from primary sources
     # (Reddit / GitHub). 0.5 means at least half the digest is Reddit/GitHub.
     primary_source_quota: float = 0.5
+    # Cross-run GitHub repo memory (first_seen / pushed / star history).
+    # Persisted across Actions runs via actions/cache on this path.
+    memory_db: str = "var/repo-memory.db"
+    # Optional seed JSON {repo: push_date} for repos pushed before the memory
+    # existed (extracted from past Actions logs). Idempotent bootstrap.
+    memory_seed: str | None = None
 
 
 def load_config(path: str | Path) -> Config:

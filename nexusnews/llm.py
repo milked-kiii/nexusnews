@@ -122,11 +122,13 @@ class OpenAICompatibleSummarizer:
             why = (why or "（暂无解读）")[:75]
             
             # Parse GitHub repo metadata from content prefix
+            # (prefix is "repo:owner/name created:... stars:..." — use search,
+            # not match, so the repo: key doesn't break the anchored parse)
             repo_created = None
             repo_stars = None
             if item.content and item.source.lower().startswith("github"):
                 import re as _re
-                m = _re.match(r"created:(\S+)\s+stars:(\d+)", item.content)
+                m = _re.search(r"created:(\S+)\s+stars:(\d+)", item.content)
                 if m:
                     repo_created = m.group(1)
                     repo_stars = int(m.group(2))
