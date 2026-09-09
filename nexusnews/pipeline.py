@@ -7,16 +7,21 @@ from pathlib import Path
 import re
 from typing import Callable
 
-from .config import Config
+from .config import Config, Competitor
 from .delivery import send_feishu, send_feishu_card, send_feishu_card_to_chats, send_feishu_chat, send_feishu_dm
 from .digest import (DigestEntry, cutoff, filter_entries, local_summarize, render_card, render_digest,
                      render_empty_digest, select_items)
 from .feishu_doc import sync_digest_to_doc, sync_entries_to_doc
-from .fetchers import PlatformFetcher, Transport
-from .memory import RepoMemory, load_seed_file
+from .fetchers import (PlatformFetcher, Transport, fetch_reddit_search, fetch_youtube_search)
+from .memory import RepoMemory, ReviewMemory, load_seed_file
 from .models import Item, RawItem, normalize_item
-from .llm import OpenAICompatibleSummarizer, with_fallback
+from .llm import OpenAICompatibleSummarizer, ReviewScorer, with_fallback
 from .storage import SQLiteItemStore
+
+# 🧪 竞品实测 source tag prefix. Review RawItems carry
+# source = "竞品实测|{competitor}|{platform}" so the pipeline can route them
+# to the review pool and the renderer can show a distinct tier.
+REVIEW_SOURCE_PREFIX = "竞品实测"
 
 # ── Agent relevance keyword filter ──────────────────────────────
 # Hard filter applied BEFORE LLM scoring to reduce noise and API calls.
@@ -219,6 +224,147 @@ def _repo_stars_of(item: Item) -> int | None:
     return int(m.group(1)) if m else None
 
 
+# ── 🧪 竞品实测 (competitor review) helpers ─────────────────────
+# The review line collects hands-on reviews of watched competitors from
+# Reddit search + YouTube search, scores them with a DEDICATED LLM pass
+# (is_hands_on_review gate + quality × tier weight), and dedupes at the
+# version level (same competitor + same version → push once; version upgrade
+# restarts the counter). Reviews share the radar slot cap with GitHub repos.
+
+_REVIEW_POSITIVE = (
+    "review", "tried", "using", "experience", "hands-on", "thoughts",
+    "impressions", "switched", "moved to", "week with", "days with",
+    "评测", "实测", "体验", "使用心得", "用了", "对比",
+)
+# Only high-confidence pure-announcement phrases are rejected here — the
+# coarse filter must NOT out-recall the LLM's is_hands_on_review gate.
+# Words like "release"/"launch" appear inside genuine reviews ("after the
+# 3.8 release, I tried…") so they are deliberately NOT in this list.
+_REVIEW_NEGATIVE = (
+    "announce", "introducing", "introduces", "now available", "official launch",
+    "官宣", "正式发布", "正式推出", "webinar", "register now", "sign up",
+)
+
+
+def _is_review_source(source_name: str) -> bool:
+    return source_name.startswith(REVIEW_SOURCE_PREFIX)
+
+
+def _review_competitor_of(source_name: str) -> str:
+    """Extract competitor name from "竞品实测|{competitor}|{platform}"."""
+    parts = source_name.split("|")
+    return parts[1] if len(parts) >= 2 else source_name
+
+
+def _is_review_candidate(item: Item) -> bool:
+    """Cheap keyword pre-filter BEFORE the LLM review pass, so we don't send
+    every Reddit/YouTube search hit to the LLM. Announcements / release notes
+    are rejected here (user Q2-B: 纯公告/转发不算)."""
+    text = f"{item.title} {item.content or ''}".lower()
+    if any(neg in text for neg in _REVIEW_NEGATIVE):
+        return False
+    return any(pos in text for pos in _REVIEW_POSITIVE)
+
+
+def _fetch_review_raws(transport: Transport, watchlist: tuple[Competitor, ...],
+                       timeout: float = 15.0) -> tuple[list[RawItem], int]:
+    """Fetch competitor reviews from Reddit search + YouTube search.
+
+    Returns (raw_items, failed_sources). Each RawItem's source is
+    "竞品实测|{competitor}|{platform}" so it routes to the review pool.
+    A failed search for one competitor is logged, not fatal — the rest of
+    the line (and the news line) still runs.
+
+    Query syntax differs per platform: Reddit's search supports boolean
+    OR ("Claude Code" OR "claude-code"); YouTube does NOT — yt-dlp passes
+    the string verbatim, so OR/quote syntax just degrades the match. Use
+    the plain competitor name for YouTube, and give it a much longer
+    timeout (full metadata extraction for N results takes ~3-4s per video,
+    vs 15s politeness-throttle for a single Reddit RSS fetch).
+    """
+    raws: list[RawItem] = []
+    failed = 0
+    for competitor in watchlist:
+        queries = [competitor.name]
+        queries.extend(a for a in competitor.aliases if a)
+        reddit_query = " OR ".join(f'"{q}"' for q in queries[:4])
+        youtube_query = competitor.name  # plain phrase; YouTube has no boolean search
+        for platform, fetch in (
+            ("Reddit", lambda q=reddit_query: fetch_reddit_search(transport, q, source="", limit=12, timeout=timeout)),
+            ("YouTube", lambda q=youtube_query: fetch_youtube_search(q, source="", limit=6, timeout=90.0)),
+        ):
+            source = f"{REVIEW_SOURCE_PREFIX}|{competitor.name}|{platform}"
+            try:
+                items = fetch()
+                for raw in items:
+                    raws.append(RawItem(
+                        source=source,
+                        title=raw.title,
+                        url=raw.url,
+                        content=raw.content,
+                        published_at=raw.published_at,
+                        external_id=raw.external_id,
+                    ))
+            except Exception:
+                failed += 1
+                logging.exception("competitor review fetch failed",
+                                  extra={"competitor": competitor.name, "platform": platform})
+    return raws, failed
+
+
+def _score_review_pool(review_items: list[Item], config: Config,
+                       scorer: ReviewScorer, memory: ReviewMemory, *,
+                       now: datetime) -> list[DigestEntry]:
+    """Run the dedicated review scoring pass and version-level dedup.
+
+    - Local keyword pre-filter (cheap, drops announcements)
+    - LLM: is_hands_on_review gate → None drops the item entirely
+    - final relevance_score = quality × tier_weight (user Q8-A)
+    - ReviewMemory: same competitor + same version already pushed → drop;
+      URL already pushed → drop. Version extraction happens in the LLM.
+    - In-batch version dedup: same (competitor, version) candidates in THIS
+      run keep only the highest-scoring one (the user's rule "同版本第二篇
+      不算" applies within a single digest too — the memory's mark_pushed
+      only happens after delivery, so it can't dedup the current batch).
+    Returns entries with relevance_score >= 6, sorted desc.
+    """
+    competitor_weight = {c.name: c.weight for c in config.competitor_watchlist}
+    scored: list[DigestEntry] = []
+    for item in review_items:
+        competitor = _review_competitor_of(item.source)
+        weight = competitor_weight.get(competitor, 0.7)
+        if not _is_review_candidate(item):
+            continue
+        try:
+            entry = scorer(item, competitor=competitor, weight=weight)
+        except Exception:
+            logging.exception("review scoring failed; review dropped",
+                              extra={"competitor": competitor, "title": item.title})
+            continue
+        if entry is None or entry.relevance_score < 6:
+            continue
+        memory.observe(competitor, entry.review_version or "", entry.url, now=now)
+        if memory.is_url_pushed(entry.url):
+            continue
+        # Cross-run version gate: this (competitor, version) event was pushed
+        # on a previous day — the new review of the same version doesn't count
+        # (user Q10). In-batch dedup below handles same-day duplicates.
+        version = entry.review_version or ""
+        if version and memory.is_version_pushed(competitor, version):
+            continue
+        scored.append(entry)
+    # In-batch version dedup: keep the best entry per (competitor, version).
+    best_by_event: dict[tuple[str, str], DigestEntry] = {}
+    for entry in scored:
+        key = (entry.competitor or "", entry.review_version or "")
+        current = best_by_event.get(key)
+        if current is None or entry.relevance_score > current.relevance_score:
+            best_by_event[key] = entry
+    result = list(best_by_event.values())
+    result.sort(key=lambda e: e.relevance_score, reverse=True)
+    return result
+
+
 def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | None = None, summarizer: Summarizer | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     database = Path(config.database)
@@ -232,14 +378,25 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
         except Exception:
             failed_sources += 1
             logging.exception("source fetch failed", extra={"source": source.name})
+
+    # 🧪 竞品实测 review line: dynamic per-competitor searches (Reddit search
+    # RSS + YouTube). Failures count toward failed_sources but never abort.
+    review_raws, review_failures = [], 0
+    if config.competitor_watchlist:
+        review_raws, review_failures = _fetch_review_raws(transport, config.competitor_watchlist)
+        failed_sources += review_failures
+        fetched.extend(review_raws)
+
     if not fetched:
         raise RuntimeError("all configured sources failed or returned no items")
     with SQLiteItemStore(database) as store:
         inserted = store.put_many(normalize_item(raw) for raw in fetched)
-        # Recency window from config (default 96h for weekly-publish sources;
-        # tighten to 48h or less when hot-list sources like GitHub/Reddit
-        # hot are configured and freshness matters more).
-        recent = store.recent(since=cutoff(hours=config.window_hours, now=now))
+        # Main news pool: 24h window. Review pool: its own window (default 7d).
+        # The two pools share the items DB but never cross-contaminate.
+        main_recent = [i for i in store.recent(since=cutoff(hours=config.window_hours, now=now))
+                       if not _is_review_source(i.source)]
+        review_recent = store.recent(since=cutoff(hours=config.review_window_hours, now=now),
+                                     source_prefix=REVIEW_SOURCE_PREFIX)
 
     # ── GitHub repo memory (cross-run, persisted via actions/cache) ──
     # Sequence matters: observe first (fixes first_seen for every repo seen
@@ -260,7 +417,7 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
         star_deltas: dict[str, int | None] = {}
         repos_observed: list[str] = []
         github_items: list[Item] = []
-        for item in recent:
+        for item in main_recent:
             key = _repo_key(item)
             if not key:
                 continue
@@ -275,10 +432,10 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
             dropped = [item for item in github_items if _repo_key(item) in pushed_or_old]
             logging.info("repo memory dropped already-pushed/stale repos",
                          extra={"repos": sorted(pushed_or_old), "dropped_items": len(dropped)})
-        recent = [item for item in recent if _repo_key(item) not in pushed_or_old]
+        main_recent = [item for item in main_recent if _repo_key(item) not in pushed_or_old]
 
     # Hard keyword filter: drop non-Agent items before LLM scoring
-    agent_relevant = [item for item in recent if _is_agent_relevant(item)]
+    agent_relevant = [item for item in main_recent if _is_agent_relevant(item)]
 
     # Select generous candidate pool (6x maximum) for scoring before filtering.
     # Larger pool ensures slow-moving sources (Qoder, Cursor, Trae, 公众号) survive
@@ -319,16 +476,76 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
     all_entries = [_with_growth(item) for item in candidates]
 
     # Filter by business relevance (≥6) and re-rank by score
-    # NOTE: don't truncate to maximum yet — _apply_primary_quota needs the full
-    # pool to ensure Reddit/GitHub representation. It handles final truncation.
-    entries = filter_entries(all_entries, maximum=len(all_entries), min_relevance=6)
+    # NOTE: don't truncate to maximum yet — the quota step needs the full
+    # pool. filter_entries here only filters; truncation happens per pool.
+    entries = filter_entries(all_entries, maximum=len(all_entries), min_relevance=6,
+                             ensure_top_fire=0)
 
-    # Apply primary-source quota: Reddit/GitHub must dominate the digest
-    entries = _apply_primary_quota(
-        entries, config.minimum, config.maximum, config.primary_source_quota,
+    # ── 双池拆分（user 2026-09-08 拍板）──────────────────────────
+    # 主池 = Reddit + 国内（GitHub 移出；GitHub 保底≥2 撤掉，见确认①）
+    # 雷达池 = GitHub 新兴项目 + 🧪 竞品实测 合并，cap=radar_cap（≤4，无下限）
+    github_entries = [e for e in entries if e.source.lower().startswith("github")]
+    main_entries = [e for e in entries if not e.source.lower().startswith("github")]
+
+    # 主池：保持原 quota 语义（Reddit≥2 保底 + 国内填充，3-5 条）
+    main_selected = _apply_primary_quota(
+        main_entries, config.minimum, config.maximum, config.primary_source_quota,
     )
 
+    # 雷达池：竞品评测（ReviewMemory 版本级去重）+ GitHub 按分混合竞争
+    review_entries: list[DigestEntry] = []
+    review_memory_path = Path(config.review_memory_db)
+    review_memory_path.parent.mkdir(parents=True, exist_ok=True)
+    if config.competitor_watchlist and review_recent:
+        # Per-competitor cap: at most `review_cap` candidates per competitor
+        # (both platforms) so the LLM review pass stays bounded even when a
+        # big competitor has many fresh hits.
+        review_cap = max(2, config.radar_cap)
+        by_competitor: dict[str, list[Item]] = {}
+        for item in review_recent:
+            by_competitor.setdefault(_review_competitor_of(item.source), []).append(item)
+        review_items: list[Item] = []
+        for competitor, items in by_competitor.items():
+            ranked = sorted(items, key=lambda i: (i.published_at or ""), reverse=True)
+            review_items.extend(ranked[:review_cap])
+        review_items = select_items(review_items, minimum=1,
+                                    maximum=len(review_items),
+                                    per_source_cap=review_cap)
+        if config.llm_endpoint and config.llm_model:
+            review_scorer = ReviewScorer(config.llm_endpoint, config.llm_model,
+                                         config.llm_api_key_env)
+            with ReviewMemory(review_memory_path) as review_memory:
+                review_entries = _score_review_pool(review_items, config, review_scorer,
+                                                    review_memory, now=now)
+        else:
+            logging.warning("no LLM configured; competitor review line skipped")
+
+    radar_pool = sorted(github_entries + review_entries, key=lambda e: e.relevance_score, reverse=True)
+    # 评测保底：GitHub 天天有高分条目，纯按分混排会让评测永远进不了日报
+    # （orca 霸榜问题的翻版）。若当天有 ≥6 分评测，雷达池保证 1 席给评测，
+    # 剩余席位 GitHub + 其余评测按分竞争（评测内部仍是 quality×tier 排序）。
+    radar_selected: list[DigestEntry] = []
+    if review_entries:
+        radar_selected.append(max(review_entries, key=lambda e: e.relevance_score))
+    for entry in radar_pool:
+        if len(radar_selected) >= config.radar_cap:
+            break
+        if entry in radar_selected:
+            continue
+        radar_selected.append(entry)
+
+    # 合并双池；空日报判定按总条数（雷达区可补主池缺口）
+    entries = main_selected + radar_selected
+    if entries and all(e.relevance_score < 9 for e in entries):
+        # promote top-1 to 🔥 so the card always has a headline tier
+        from dataclasses import replace
+        top_idx = max(range(len(entries)), key=lambda i: entries[i].relevance_score)
+        entries = [replace(e, relevance_score=9) if i == top_idx else e
+                   for i, e in enumerate(entries)]
+
     selected = [item for item in candidates if any(e.item_id == item.id for e in entries)]
+    # review items aren't in `candidates` — track them separately for delivery
+    review_selected_ids = {e.item_id for e in radar_selected if e.category == "review"}
     if len(entries) < config.minimum:
         text = render_empty_digest(generated_at=now, failed_sources=failed_sources, minimum=config.minimum)
     elif card_mode:
@@ -340,7 +557,7 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
     output = Path(config.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text + "\n", encoding="utf-8")
-    logging.info("digest generated", extra={"fetched": len(fetched), "inserted": inserted, "candidates": len(candidates), "scored": len(all_entries), "selected": len(entries)})
+    logging.info("digest generated", extra={"fetched": len(fetched), "inserted": inserted, "candidates": len(candidates), "scored": len(all_entries), "selected": len(entries), "reviews": len(review_entries)})
     if not dry_run:
         if card_mode:
             # Optionally sync the digest to a Feishu cloud doc and append the
@@ -364,6 +581,7 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
             _deliver_text(config, text)
         with SQLiteItemStore(database) as store:
             store.mark_delivered(item.id for item in selected)
+            store.mark_delivered(review_selected_ids)
         # Record pushed repos in the cross-run memory (one push per repo).
         # Runs even on empty digests so observation-only days still persist.
         pushed_repos = [k for k in (_repo_key(item) for item in selected) if k]
@@ -371,4 +589,13 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
             if pushed_repos:
                 memory.mark_pushed(pushed_repos, now=now)
             memory.prune_snapshots(now=now)
+        # Record pushed reviews in the cross-run review memory (version-level:
+        # same competitor + same version pushes once ever; URL once ever).
+        with ReviewMemory(review_memory_path) as review_memory:
+            for entry in radar_selected:
+                if entry.category != "review":
+                    continue
+                review_memory.mark_pushed(entry.competitor or "",
+                                          entry.review_version or "",
+                                          entry.url, now=now)
     return text

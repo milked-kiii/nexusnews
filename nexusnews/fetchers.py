@@ -465,6 +465,83 @@ def parse_discord(data: object, *, source: str, channel_id: str) -> Sequence[Raw
     return result
 
 
+# ── 竞品实测 (competitor review) fetch helpers ─────────────────
+# Reviews of watched competitors come from two search surfaces:
+#   - Reddit search RSS (kind=reddit_search in spirit): the RSS endpoint
+#     works without Cloudflare trouble (JSON API is blocked — see pitfall
+#     4b); search.rss supports q= + sort=new + t=week so we get fresh
+#     threads mentioning the competitor. No upvote scores in RSS, so
+#     quality filtering happens in the LLM review scorer instead.
+#   - YouTube search via yt-dlp (kind=youtube_search in spirit): metadata
+#     only (title/channel/upload_date), never downloads media. yt-dlp must
+#     be installed; on GitHub Actions the workflow pip-installs it.
+# Both return RawItems whose `source` is tagged "竞品实测|{competitor}|{platform}"
+# so the pipeline can route them to the review line and the renderer can
+# show a distinct 🧪 tier. The tag format matters — several places split on "|".
+
+
+def fetch_reddit_search(transport: Transport, query: str, *, source: str,
+                        limit: int = 15, timeout: float = 10.0) -> list[RawItem]:
+    """Search Reddit via the RSS endpoint (newest first, past week)."""
+    url = "https://www.reddit.com/search.rss?" + urlencode({
+        "q": query, "sort": "new", "t": "week", "limit": max(1, limit),
+    })
+    return RSSFetcher(transport, timeout=timeout).fetch(url, source=source)
+
+
+def fetch_youtube_search(query: str, *, source: str, limit: int = 6,
+                         timeout: float = 90.0) -> list[RawItem]:
+    """Search YouTube via yt-dlp; returns metadata-only RawItems.
+
+    Runs ``yt-dlp ytsearchN:"<query>" --dump-single-json`` (NOT flat: flat
+    entries lack ``upload_date``, which the 7-day review window needs).
+    PYTHONPATH is scrubbed from the child env — on this Mac the Hermes venv
+    leaks into brew python3.14's site-packages and breaks yt-dlp's cffi
+    import (version mismatch); GitHub Actions doesn't have that problem but
+    the scrub is harmless there.
+    """
+    import subprocess
+    cmd = ["yt-dlp", f"ytsearch{max(1, min(limit, 10))}:{query}",
+           "--dump-single-json", "--no-warnings", "--skip-download"]
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise FetchError(f"yt-dlp search failed for {query!r}: {exc}") from exc
+    if proc.returncode != 0:
+        raise FetchError(f"yt-dlp search failed for {query!r} (exit {proc.returncode}): {proc.stderr.strip()[:200]}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise FetchError(f"yt-dlp returned invalid JSON for {query!r}: {exc}") from exc
+    result: list[RawItem] = []
+    for entry in data.get("entries", []):
+        video_id = entry.get("id")
+        title = _string(entry.get("title"))
+        if not video_id or not title:
+            continue
+        channel = _string(entry.get("channel"))
+        upload = entry.get("upload_date")  # YYYYMMDD
+        published = None
+        if isinstance(upload, str) and len(upload) == 8 and upload.isdigit():
+            published = (f"{upload[:4]}-{upload[4:6]}-{upload[6:8]}T00:00:00Z")
+        views = entry.get("view_count")
+        views_str = f" · {views} views" if isinstance(views, int) else ""
+        content = f"{channel or ''} · YouTube 评测候选{views_str}".strip(" · ")
+        description = _string(entry.get("description"))
+        if description:
+            content = f"{content} · {description[:400]}"
+        result.append(RawItem(
+            source=source,
+            title=title[:280],
+            url=f"https://www.youtube.com/watch?v={video_id}",
+            content=content,
+            published_at=published,
+            external_id=video_id,
+        ))
+    return result
+
+
 @dataclass
 class PlatformFetcher:
     """Fetch official platform APIs, keeping credentials in environment variables."""

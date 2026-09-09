@@ -23,9 +23,10 @@ CATEGORIES = {
     "funding":      "💸 投融资风向",
     "policy":       "⚖️ 政策 & 治理",
     "research":     "🎓 研究前沿",
+    "review":       "🧪 竞品实测",
 }
 
-CATEGORY_ORDER = ["frontier", "agent", "vertical", "tools", "funding", "business", "policy", "research"]
+CATEGORY_ORDER = ["frontier", "agent", "vertical", "tools", "funding", "business", "policy", "research", "review"]
 
 _CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "frontier":  ["model", "GPT", "Claude", "Gemini", "LLM", "参数", "benchmark", "training",
@@ -156,6 +157,10 @@ class DigestEntry:
     published_at: str | None = None
     repo_created: str | None = None
     repo_stars: int | None = None
+    # 🧪 竞品实测 line: canonical competitor display name (e.g. "Claude Code")
+    # and the normalized version key used for version-level dedup.
+    competitor: str | None = None
+    review_version: str | None = None
 
 
 # Short names like "IDG", "YC", "GGV" easily false-positive when they appear as
@@ -254,7 +259,12 @@ def render_digest(entries: list[DigestEntry], *, generated_at: datetime | None =
              f"过去 {window_hours} 小时的低噪音精选。", ""]
     for number, entry in enumerate(entries, 1):
         summary_line = entry.summary if entry.summary.startswith(">") else f"> 摘要：{entry.summary}"
-        lines.extend([f"{number}. {entry.title}", f"来源：{entry.source}", f"原文：[阅读原文]({entry.url})",
+        if getattr(entry, "competitor", None):
+            platform = entry.source.split("|")[-1]
+            source_line = f"来源：🧪 {entry.competitor} · {platform}"
+        else:
+            source_line = f"来源：{entry.source}"
+        lines.extend([f"{number}. {entry.title}", source_line, f"原文：[阅读原文]({entry.url})",
                       summary_line, f"为什么重要：{entry.why_important}", ""])
     if failed_sources:
         lines.append(f"注：今日有 {failed_sources} 个信源暂时不可用，已基于其余来源完成筛选；不会用低质量内容补位。")
@@ -296,13 +306,21 @@ def _format_published(published_at: str | None, *, now: datetime | None = None) 
 
 
 def _source_display_tier(source_name: str) -> int:
-    """Display tier for grouping in card: 0=Reddit, 1=GitHub, 2=domestic."""
+    """Display tier for grouping in card: 0=Reddit, 1=GitHub, 2=🧪竞品实测, 3=domestic."""
     s = source_name.lower()
     if s.startswith("reddit"):
         return 0
     if s.startswith("github"):
         return 1
-    return 2
+    if s.startswith("竞品实测") or s.startswith("🧪"):
+        return 2
+    return 3
+
+
+def _review_platform(source_name: str) -> str:
+    """Extract the platform from a review source tag "竞品实测|{competitor}|{platform}"."""
+    parts = source_name.split("|")
+    return parts[-1] if len(parts) >= 3 else "评测"
 
 
 def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = None,
@@ -331,7 +349,7 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
     sorted_entries = sorted(entries, key=display_key)
 
     # Group by source tier for display, then by category within each tier
-    tier_names = {0: "Reddit 热议", 1: "GitHub 新兴项目", 2: "国内动态"}
+    tier_names = {0: "Reddit 热议", 1: "GitHub 新兴项目", 2: "🧪 竞品实测", 3: "国内动态"}
     tier_groups: dict[int, dict[str, list[DigestEntry]]] = {}
     for entry in sorted_entries:
         tier = _source_display_tier(entry.source)
@@ -351,14 +369,18 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
             })
             elements.append({"tag": "hr"})
 
+        # 竞品实测 entries are all category="review" — skip the redundant
+        # category header and number them straight through.
+        review_tier = tier == 2
         displayed_categories = [c for c in CATEGORY_ORDER if c in grouped]
         for cat in displayed_categories:
             items = grouped[cat]
-            # Category header
-            elements.append({
-                "tag": "div",
-                "text": {"tag": "lark_md", "content": f"**{CATEGORIES[cat]}**  ({len(items)}条)"},
-            })
+            if not review_tier:
+                # Category header
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"**{CATEGORIES[cat]}**  ({len(items)}条)"},
+                })
 
             for local_idx, entry in enumerate(items, 1):
                 safe_title = _escape_md(entry.title)[:80]
@@ -375,6 +397,11 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
                     # Fallback for GitHub items without parsed meta
                     repo_name = entry.url.replace("https://github.com/", "") if "github.com" in entry.url else ""
                     meta_line = f"<font color='grey'>📦 {repo_name}</font>" if repo_name else f"<font color='grey'>{safe_source} · {safe_published}</font>"
+                elif review_tier:
+                    competitor = entry.competitor or safe_source
+                    platform = _review_platform(entry.source)
+                    version_note = f" · v{entry.review_version}" if entry.review_version else ""
+                    meta_line = f"<font color='grey'>🧪 {competitor}{version_note} · {platform} · {safe_published}</font>"
                 else:
                     meta_line = f"<font color='grey'>{safe_source} · {safe_published}</font>"
 

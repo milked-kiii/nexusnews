@@ -161,3 +161,130 @@ def with_fallback(primary, *, vc_watchlist: tuple[str, ...] = ()):
         except Exception:
             return local_summarize(item, vc_watchlist=vc_watchlist)
     return summarize
+
+
+# ── 🧪 竞品实测 review scorer ───────────────────────────────────
+# Competitor reviews get a separate scoring pass from news items:
+#   1. is_hands_on_review — hard gate. Announcements, reposts, release notes
+#      are NOT reviews (user Q2-B: 纯公告/转发不算).
+#   2. product_version — extracted for version-level dedup (user Q10: same
+#      competitor + same version counts once; version upgrade restarts).
+#   3. quality_score 0-10 — review depth/insight, NOT how relevant the news
+#      is. The final relevance_score = quality × tier_weight so a mediocre
+#      review of a Tier-1 competitor can't outrank a great review of a Tier-3
+#      one (user Q8-A: 竞品战略重要性 × 评测质量).
+import re as _re
+
+
+def _normalize_version(raw: str | None) -> str:
+    """Normalize an LLM-extracted version to a stable dedup key.
+
+    "Claude Code 3.8" / "v3.8.0" / "3.8" all collapse to "3.8.0"-ish keys;
+    empty/unknown versions become "" (URL-level dedup only).
+    """
+    if not raw:
+        return ""
+    m = _re.search(r"(\d+(?:\.\d+){1,3})", raw)
+    if not m:
+        # No numeric version → keep a compact slug of the raw text so
+        # "Claude Code 3.8" vs "Claude Code 3.9" still differ.
+        slug = _re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+        return slug[:40]
+    parts = m.group(1).split(".")
+    return ".".join(parts[:3])
+
+
+class ReviewScorer:
+    """LLM scorer for competitor reviews; returns a DigestEntry whose
+    relevance_score already includes the competitor's tier weight.
+
+    Unlike the news summarizer, a failed/off-topic review does NOT fall back
+    to a local summary with a mid score — it returns None so the review is
+    dropped entirely (a local heuristic can't judge "hands-on" reliably).
+    """
+
+    def __init__(self, endpoint: str, model: str, api_key_env: str, *,
+                 transport=urlopen, timeout: float = 20):
+        self.endpoint, self.model, self.api_key_env = endpoint, model, api_key_env
+        self.transport, self.timeout = transport, timeout
+
+    def __call__(self, item: Item, *, competitor: str, weight: float) -> DigestEntry | None:
+        key = os.environ.get(self.api_key_env)
+        if not key:
+            raise LLMSummaryError(f"missing required environment variable: {self.api_key_env}")
+
+        system_context = (
+            "你是 AI 产品的竞品评测分析助手，服务于 coding 和 work Agent 产品团队。\n\n"
+            "**任务**：判断一条来自 Reddit/YouTube 的内容是否为『竞品使用体验/评测』，\n"
+            "并评估其质量。\n\n"
+            "**准入标准（is_hands_on_review）**：\n"
+            "- true：一手实测/深度评测——作者实际使用过该产品，有具体使用细节（做了什么、\n"
+            "  哪里翻车、和同类对比、性能/成本实测、心得吐槽）。\n"
+            "- false：官方发布公告、发布会、release notes、纯转发、新闻稿、求推荐帖、\n"
+            "  没有实际使用证据的推荐/盘点、纯提问求助。\n\n"
+            "**product_version**：从标题/正文提取评测针对的产品版本号，如 \"3.8\"、\"v2.1\"。\n"
+            "没有明确版本号就返回空字符串。\n\n"
+            "**quality_score (0-10)**：评测深度与信息含金量——\n"
+            "- 9-10：长文/长视频深度实测，有对比基准、具体数据或可复现结论，敢讲缺点\n"
+            "- 7-8：认真使用过，有具体场景和细节，结论可信\n"
+            "- 5-6：泛泛而谈的体验，细节少，或营销味重\n"
+            "- 0-4：没有真实使用痕迹（标题党/搬运/广告）\n\n"
+            "**返回 JSON**：{\"is_hands_on_review\": bool, \"product_version\": str, "
+            "\"quality_score\": 0-10 整数, \"title\": 28字以内, "
+            "\"summary\": 60-110汉字中文摘要, \"why_important\": 35-75汉字}"
+        )
+        prompt = (
+            f"{system_context}\n\n"
+            f"竞品：{competitor}\n"
+            f"来源：{item.source}\n"
+            f"标题：{item.title}\n"
+            f"正文：{item.content or item.title}\n"
+            f"链接：{item.url or ''}\n\n"
+            "请返回 JSON。"
+        )
+        body = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        }, ensure_ascii=False).encode()
+        request = Request(
+            self.endpoint,
+            data=body,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        )
+        try:
+            with self.transport(request, timeout=self.timeout) as response:
+                data = json.loads(response.read())
+            result = json.loads(data["choices"][0]["message"]["content"])
+        except Exception as exc:
+            raise LLMSummaryError(f"review LLM summary failed: {exc}") from exc
+
+        if not result.get("is_hands_on_review", False):
+            return None
+        quality = int(result.get("quality_score", 0))
+        final = round(quality * weight)
+        summary = result.get("summary") or ""
+        if summary and len(summary) < 60:
+            summary = (summary + " 详情参见原文。")[:110]
+        summary = summary[:110]
+        why = result.get("why_important") or ""
+        if why and len(why) < 35:
+            why = (why + " 值得持续关注。")[:75]
+        why = why[:75]
+        version = _normalize_version(result.get("product_version"))
+        return DigestEntry(
+            (result.get("title") or item.title).strip()[:28],
+            item.source,
+            item.url or "（无链接）",
+            summary,
+            why,
+            "review",
+            item.id,
+            item.source,
+            item.dedupe_key,
+            final,
+            published_at=item.published_at,
+            competitor=competitor,
+            review_version=version,
+        )

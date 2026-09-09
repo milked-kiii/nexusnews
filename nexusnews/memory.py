@@ -183,3 +183,98 @@ def load_seed_file(path: str | Path) -> dict[str, str]:
         logging.warning("memory seed must be a JSON object, skipping", extra={"path": str(path)})
         return {}
     return {str(k): str(v) for k, v in data.items()}
+
+
+class ReviewMemory:
+    """Cross-run memory for the 🧪 竞品实测 (competitor review) line.
+
+    GitHub repos have a stable identity (owner/name); competitor reviews do
+    NOT — the same product event (e.g. "Claude Code 3.8 release") spawns
+    dozens of reviews across Reddit/YouTube. The user's dedup rule (2026-09-08
+    Q10 answer: "那这种不算") is:
+
+      - Same competitor + same product version → push only the best review,
+        ever. The second review of that version is NOT counted.
+      - Version upgrade → new event, counting restarts.
+      - URL level: a pushed URL never repeats.
+
+    The LLM review scorer extracts the version (e.g. "3.8"); when extraction
+    fails the version key is empty and the row degrades to URL-level dedup
+    only (7-day review window still bounds repetition).
+
+    Like RepoMemory this lives in its own SQLite file persisted across
+    Actions runs via actions/cache (the main items DB resets daily).
+    """
+
+    def __init__(self, path: str | Path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(path)
+        self._connection.row_factory = sqlite3.Row
+        self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS reviews (
+                competitor TEXT NOT NULL,
+                version TEXT NOT NULL,
+                url TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_pushed TEXT,
+                PRIMARY KEY (competitor, version, url)
+            )
+        """)
+        self._connection.commit()
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> "ReviewMemory":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    # ── queries ──────────────────────────────────────────────────
+
+    def is_version_pushed(self, competitor: str, version: str) -> bool:
+        """True if this (competitor, version) event was already pushed."""
+        row = self._connection.execute(
+            "SELECT last_pushed FROM reviews WHERE competitor = ? AND version = ? LIMIT 1",
+            (competitor, version)).fetchone()
+        return bool(row and row["last_pushed"])
+
+    def is_url_pushed(self, url: str) -> bool:
+        """True if this review URL was already pushed for any competitor."""
+        row = self._connection.execute(
+            "SELECT last_pushed FROM reviews WHERE url = ? LIMIT 1",
+            (url,)).fetchone()
+        return bool(row and row["last_pushed"])
+
+    def best_url_for_event(self, competitor: str, version: str) -> str | None:
+        """Return the URL already pushed for this (competitor, version), if any."""
+        row = self._connection.execute(
+            "SELECT url FROM reviews WHERE competitor = ? AND version = ? AND last_pushed IS NOT NULL LIMIT 1",
+            (competitor, version)).fetchone()
+        return row["url"] if row else None
+
+    # ── observation & delivery ───────────────────────────────────
+
+    def observe(self, competitor: str, version: str, url: str, *,
+                now: datetime | None = None) -> None:
+        """Record that we saw this review today (first_seen fix, idempotent)."""
+        today = _today(now).isoformat()
+        with self._connection:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO reviews (competitor, version, url, first_seen, last_pushed) "
+                "VALUES (?, ?, ?, ?, NULL)",
+                (competitor, version, url, today))
+
+    def mark_pushed(self, competitor: str, version: str, url: str, *,
+                    now: datetime | None = None) -> None:
+        today = _today(now).isoformat()
+        with self._connection:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO reviews (competitor, version, url, first_seen, last_pushed) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (competitor, version, url, today, today))
+            self._connection.execute(
+                "UPDATE reviews SET last_pushed = ? WHERE competitor = ? AND version = ? AND url = ?",
+                (today, competitor, version, url))

@@ -306,7 +306,14 @@ def sync_entries_to_doc(title: str, entries: list, open_id: str,
                 "text": {"elements": [title_run], "style": {}},
             })
             published = _format_published(entry.published_at)
-            meta_run = _text_run(f"{entry.source} · {published}")
+            # 🧪 review entries carry "竞品实测|{competitor}|{platform}" in
+            # source — render a human meta line instead of the raw tag.
+            if getattr(entry, "competitor", None):
+                platform = getattr(entry, "source", "").split("|")[-1]
+                meta_text = f"🧪 {entry.competitor} · {platform} · {published}"
+            else:
+                meta_text = f"{entry.source} · {published}"
+            meta_run = _text_run(meta_text)
             link_run = _text_run("  🔗 阅读原文", url=entry.url)
             blocks.append({
                 "block_type": _BLOCK_TEXT,

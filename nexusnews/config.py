@@ -25,6 +25,25 @@ class Source:
 
 
 @dataclass(frozen=True)
+class Competitor:
+    """One watched competitor product for the 🧪 竞品实测 review line.
+
+    ``name`` is the canonical display name (e.g. "Claude Code"). ``tier``
+    maps to a strategic weight (1→1.0, 2→0.85, 3→0.7) that multiplies the
+    LLM review-quality score so final ranking reflects both how important
+    the competitor is to us and how good the review is.
+    """
+
+    name: str
+    tier: int = 3
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def weight(self) -> float:
+        return {1: 1.0, 2: 0.85, 3: 0.7}.get(self.tier, 0.7)
+
+
+@dataclass(frozen=True)
 class Config:
     sources: tuple[Source, ...]
     database: str = "var/nexusnews.db"
@@ -56,6 +75,21 @@ class Config:
     # Optional seed JSON {repo: push_date} for repos pushed before the memory
     # existed (extracted from past Actions logs). Idempotent bootstrap.
     memory_seed: str | None = None
+    # ── 竞品实测 (competitor review) line ─────────────────────────
+    # Watchlist of competitors whose hands-on reviews /评测 are collected
+    # from Reddit search + YouTube search. Each entry's tier maps to a
+    # strategic weight (see Competitor.weight) applied on top of the LLM's
+    # review-quality score.
+    competitor_watchlist: tuple[Competitor, ...] = ()
+    # Shared slot cap for the radar zone: GitHub emerging repos + competitor
+    # reviews combined never exceed this (user: "github的东西和竞品加起来4条").
+    radar_cap: int = 4
+    # Review line uses its own recency window (reviews stay valuable for days,
+    # unlike 24h news). 168h = 7 days, matching the user's "评测放宽到7天".
+    review_window_hours: int = 168
+    # Cross-run competitor-review memory (pushed URLs + pushed versions),
+    # persisted across Actions runs via actions/cache like repo memory.
+    review_memory_db: str = "var/review-memory.db"
 
 
 def load_config(path: str | Path) -> Config:
@@ -67,12 +101,29 @@ def load_config(path: str | Path) -> Config:
             top_level["vc_watchlist"] = tuple(top_level["vc_watchlist"])
         if "feishu_chat_ids" in top_level:
             top_level["feishu_chat_ids"] = tuple(top_level["feishu_chat_ids"])
+        if "competitor_watchlist" in top_level:
+            raw = top_level.pop("competitor_watchlist")
+            competitors = []
+            for item in raw:
+                if isinstance(item, dict):
+                    aliases = item.get("aliases") or []
+                    if isinstance(aliases, str):
+                        aliases = [aliases]
+                    competitors.append(Competitor(
+                        name=item.get("name", ""),
+                        tier=int(item.get("tier", 3)),
+                        aliases=tuple(str(a) for a in aliases),
+                    ))
+                else:
+                    competitors.append(Competitor(name=str(item)))
+            top_level["competitor_watchlist"] = tuple(competitors)
         config = Config(sources=sources, **top_level)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid config {path}: {exc}") from exc
     if not sources:
         raise ValueError("config must contain at least one source")
-    supported_kinds = {"rss", "medium", "reddit", "github", "github_trending", "github_search", "x", "discord", "webpage"}
+    supported_kinds = {"rss", "medium", "reddit", "github", "github_trending", "github_search", "x", "discord", "webpage",
+                       "reddit_search", "youtube_search"}
     for source in sources:
         if source.kind not in supported_kinds:
             raise ValueError(f"unsupported source kind: {source.kind}")
@@ -92,6 +143,19 @@ def load_config(path: str | Path) -> Config:
             raise ValueError(f"X source {source.name!r} requires query and token_env")
         if source.kind == "discord" and (not source.channel_id or not source.token_env):
             raise ValueError(f"Discord source {source.name!r} requires channel_id and token_env")
+        if source.kind == "reddit_search" and not source.query:
+            raise ValueError(f"reddit_search source {source.name!r} requires query")
+        if source.kind == "youtube_search" and not source.query:
+            raise ValueError(f"youtube_search source {source.name!r} requires query")
+    for competitor in config.competitor_watchlist:
+        if not competitor.name:
+            raise ValueError("competitor_watchlist entries must have a name")
+        if competitor.tier not in (1, 2, 3):
+            raise ValueError(f"competitor {competitor.name!r} tier must be 1, 2 or 3")
+    if not 0 <= config.radar_cap <= 10:
+        raise ValueError("radar_cap must be between 0 and 10")
+    if not 1 <= config.review_window_hours <= 24 * 14:
+        raise ValueError("review_window_hours must be between 1 and 336 (14 days)")
     if not 1 <= config.minimum <= config.maximum <= 10:
         raise ValueError("config selection must satisfy 1 <= minimum <= maximum <= 10")
     if not 1 <= config.window_hours <= 24 * 14:

@@ -60,28 +60,34 @@ class SQLiteItemStore:
         ).fetchall()
         return [Item(**dict(row)) for row in rows]
 
-    def recent(self, *, since: str, limit: int = 500) -> list[Item]:
+    def recent(self, *, since: str, limit: int = 500, source_prefix: str | None = None) -> list[Item]:
         """Return undelivered published items in newest-first order.
 
         Items with no published_at (e.g. webpage-scraped cards whose listing
         page didn't expose a date) fall back to stored_at — the time we first
         saw them — so they aren't silently dropped by the cutoff.
+
+        ``source_prefix`` optionally narrows to one source family (e.g.
+        "竞品实测" for the review pool) — the main 24h news pool and the
+        review pool share the same items DB but must never cross-contaminate.
         """
         if limit < 1:
             raise ValueError("limit must be positive")
         # stored_at uses SQLite's CURRENT_TIMESTAMP format ("YYYY-MM-DD HH:MM:SS"),
         # while `since` is ISO-8601 with a trailing "Z". Convert for comparison.
         since_sqlite = since.replace("T", " ").replace("Z", "").split(".")[0]
+        where = "delivered = 0 AND ((published_at IS NOT NULL AND published_at >= ?) OR (published_at IS NULL AND stored_at >= ?))"
+        params: list[object] = [since, since_sqlite]
+        if source_prefix:
+            where += " AND source LIKE ?"
+            params.append(f"{source_prefix}%")
+        params.append(limit)
         rows = self._connection.execute(
-            """SELECT id, source, title, url, content, published_at, dedupe_key
-               FROM items
-               WHERE delivered = 0
-                 AND (
-                       (published_at IS NOT NULL AND published_at >= ?)
-                       OR (published_at IS NULL AND stored_at >= ?)
-                     )
-               ORDER BY COALESCE(published_at, stored_at) DESC, id LIMIT ?""",
-            (since, since_sqlite, limit),
+            f"""SELECT id, source, title, url, content, published_at, dedupe_key
+                FROM items
+                WHERE {where}
+                ORDER BY COALESCE(published_at, stored_at) DESC, id LIMIT ?""",
+            params,
         ).fetchall()
         return [Item(**dict(row)) for row in rows]
 
