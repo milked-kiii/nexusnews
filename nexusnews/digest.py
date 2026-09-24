@@ -8,6 +8,21 @@ from urllib.parse import urlsplit
 
 from .models import Item
 
+# The digest is read by a Beijing audience, so every *displayed* date/time is
+# rendered in UTC+8. This matters for the scheduled run: it starts at 20:00 UTC
+# (= 04:00 Beijing the next day), and rendering the header in UTC would date
+# each morning's digest with the previous day. Fixed offset, not ZoneInfo —
+# China has no DST, and this keeps the module free of a tzdata dependency.
+# All window/cutoff/memory math upstream stays in UTC.
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def _beijing(dt: datetime) -> datetime:
+    """Render an instant in UTC+8, treating naive datetimes as UTC."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BEIJING_TZ)
+
 
 _WORDS = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 _STOP = {"the", "a", "an", "and", "of", "to", "in", "for", "on", "with", "ai", "发布", "推出", "宣布"}
@@ -253,7 +268,7 @@ def local_summarize(item: Item, *, vc_watchlist: tuple[str, ...] = ()) -> Digest
 
 def render_digest(entries: list[DigestEntry], *, generated_at: datetime | None = None, digest_id: str | None = None,
                   failed_sources: int = 0, window_hours: int = 48) -> str:
-    generated_at = generated_at or datetime.now(timezone.utc)
+    generated_at = _beijing(generated_at or datetime.now(timezone.utc))
     digest_id = digest_id or generated_at.strftime("%Y-%m-%d")
     lines = [f"🤖 AI 日报｜{generated_at:%Y-%m-%d}（共 {len(entries)} 条）",
              f"过去 {window_hours} 小时的低噪音精选。", ""]
@@ -272,6 +287,7 @@ def render_digest(entries: list[DigestEntry], *, generated_at: datetime | None =
 
 
 def render_empty_digest(*, generated_at: datetime, failed_sources: int = 0, minimum: int = 3) -> str:
+    generated_at = _beijing(generated_at)
     text = (f"🤖 AI 日报｜{generated_at:%Y-%m-%d}\n"
             f"今天没有凑够 {minimum} 条达到质量阈值的 AI 动态，因此不发送常规精选。明天会继续为你筛选。")
     if failed_sources:
@@ -298,7 +314,7 @@ def _format_published(published_at: str | None, *, now: datetime | None = None) 
         parsed = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
     except ValueError:
         return "时间未知"
-    now = now or datetime.now(timezone.utc)
+    now = _beijing(now or datetime.now(timezone.utc))
     local = parsed.astimezone(now.tzinfo or timezone.utc)
     if local.year == now.year:
         return f"{local.month}月{local.day}日 {local.hour:02d}:{local.minute:02d}"
@@ -333,7 +349,7 @@ def render_card(entries: list[DigestEntry], *, generated_at: datetime | None = N
     Entries are displayed grouped by source tier (Reddit -> GitHub -> domestic),
     then by category within each tier, then by score within each category.
     """
-    generated_at = generated_at or datetime.now(timezone.utc)
+    generated_at = _beijing(generated_at or datetime.now(timezone.utc))
     zh_date = f"{generated_at.month}月{generated_at.day}日"
 
     # Sort entries: source tier first (Reddit -> GitHub -> domestic), then

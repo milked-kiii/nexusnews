@@ -9,8 +9,8 @@ from typing import Callable
 
 from .config import Config, Competitor
 from .delivery import send_feishu, send_feishu_card, send_feishu_card_to_chats, send_feishu_chat, send_feishu_dm
-from .digest import (DigestEntry, cutoff, filter_entries, local_summarize, render_card, render_digest,
-                     render_empty_digest, select_items)
+from .digest import (BEIJING_TZ, DigestEntry, cutoff, filter_entries, local_summarize, render_card,
+                     render_digest, render_empty_digest, select_items)
 from .feishu_doc import sync_digest_to_doc, sync_entries_to_doc
 from .fetchers import (PlatformFetcher, Transport, fetch_reddit_search, fetch_youtube_search)
 from .memory import RepoMemory, ReviewMemory, load_seed_file
@@ -567,7 +567,7 @@ def run(config: Config, transport: Transport, *, dry_run: bool, now: datetime | 
             if config.doc_sync and len(entries) >= config.minimum:
                 open_id = config.feishu_open_id or os.environ.get(config.feishu_open_id_env, "")
                 if open_id:
-                    title = f"🤖 AI 日报 {now.astimezone(timezone.utc).strftime('%Y-%m-%d')}"
+                    title = f"🤖 AI 日报 {now.astimezone(BEIJING_TZ).strftime('%Y-%m-%d')}"
                     doc = sync_entries_to_doc(title, entries, open_id,
                                               app_id_env=config.feishu_app_id_env,
                                               app_secret_env=config.feishu_app_secret_env)

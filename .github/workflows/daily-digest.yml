@@ -2,14 +2,16 @@ name: AI 日报推送
 
 on:
   schedule:
-    # 每天北京时间 10:00 (UTC+8 = 02:00 UTC)
-    - cron: "0 2 * * *"
+    # 北京时间 04:00 = UTC 20:00（前一天）。故意提前 5 小时，用来吸收
+    # GitHub scheduled workflow 的触发延迟（2026-09 实测稳定延迟约 5.5h，
+    # 触发即起跑，不是 runner 排队），使日报大约在北京时间 09:00 送达。
+    - cron: "0 20 * * *"
   workflow_dispatch:
 
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +46,7 @@ jobs:
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          NEXUSNEWS_LLM_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          NEXUSNEWS_LLM_API_KEY: ${{ secrets.TOKENHUB_API_KEY }}
         run: |
           python -m nexusnews --config config.group.json
 

@@ -134,8 +134,8 @@
   "memory_seed": "var/repo-memory-seed.json",
   "delivery_mode": "card_chat",
   "doc_sync": false,
-  "llm_endpoint": "https://api.deepseek.com/v1/chat/completions",
-  "llm_model": "deepseek-chat",
+  "llm_endpoint": "https://tokenhub.infplacex.com/v1/chat/completions",
+  "llm_model": "deepseek-v4-flash-vision-exp",
   "llm_api_key_env": "NEXUSNEWS_LLM_API_KEY",
   "vc_watchlist": [
     "红杉中国",
